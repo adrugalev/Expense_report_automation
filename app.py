@@ -656,6 +656,15 @@ def _receipt_editor(receipt_files, report_type: str) -> list[Receipt]:
     ]
     if parse_warnings:
         st.warning("Проверьте распознавание чеков:\n\n" + "\n".join(parse_warnings))
+        if any("OCR" in warning for warning in parse_warnings):
+            if st.button("Установить OCR для сканов", type="secondary", key="install_receipt_ocr_after_warning"):
+                with st.spinner("Устанавливаю встроенное распознавание чеков..."):
+                    status = ensure_builtin_ocr_runtime()
+                if status.available:
+                    st.session_state.pop("_receipt_parse_cache", None)
+                    st.success(f"OCR для сканов готов: {status.engine}")
+                    st.rerun()
+                st.error(status.message)
     frame = pd.DataFrame(
         [
             {
@@ -711,19 +720,7 @@ def _ensure_ocr_runtime_for_uploads(receipt_files) -> None:
             st.session_state.pop("_receipt_parse_cache", None)
             st.success(f"OCR для сканов готов: {status.engine}")
             st.rerun()
-
-    if st.button("Установить OCR для сканов", type="secondary"):
-        with st.spinner("Устанавливаю встроенное распознавание чеков..."):
-            status = ensure_builtin_ocr_runtime()
-        if status.available:
-            st.session_state.pop("_receipt_parse_cache", None)
-            st.success(f"OCR для сканов готов: {status.engine}")
-            st.rerun()
-
-    st.error(
-        "OCR для PDF/JPG-сканов пока недоступен. "
-        "Для чеков без текстового слоя автоматическое распознавание суммы и ФД не сработает."
-    )
+        st.session_state["_receipt_ocr_install_error"] = status.message
 
 
 def _parse_uploaded_receipt_cached(uploaded) -> Receipt:
