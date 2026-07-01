@@ -1145,19 +1145,18 @@ def _gift_form(employee, common_kwargs, excel_values: list[str]):
         "Создание долгосрочных деловых отношений, укрепление связей с ключевыми клиентами "
         "и деловыми партнерами и формирование корпоративного имиджа и деловой репутации"
     )
-    left, right = st.columns(2, gap="large")
-    with left:
+    report_date_col, purchase_date_col = st.columns(2, gap="large")
+    with report_date_col:
         report_date = st.date_input("Дата составления документов", value=date.today(), width=320)
+    with purchase_date_col:
         purchase_date = st.date_input("Дата покупки", value=default_purchase_date, width=320)
-    with right:
-        unit_price = st.text_input("Сумма расходов", value=str(default_amount), width=240)
     purpose = st.text_area("Цель расходов", value=default_purpose, height=120, width=640)
     return {
         "initiator": employee,
         "purchase_date": purchase_date,
         "gift_name": "подарочная продукция",
         "gift_quantity": 1,
-        "unit_price": unit_price,
+        "unit_price": default_amount,
         "recipients": [],
         "counterparty": "Подарки",
         "occasion": "",
