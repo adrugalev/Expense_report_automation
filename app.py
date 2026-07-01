@@ -15,7 +15,7 @@ from src.employee_directory import EmployeeDirectory
 from pydantic import ValidationError
 
 from src.models import BusinessTripReport, GiftExpenseReport, Receipt, RepresentativeExpenseReport
-from src.receipt_parser import parse_receipt_file, receipt_from_table_row
+from src.receipt_parser import ensure_builtin_ocr_runtime, ocr_runtime_status, parse_receipt_file, receipt_from_table_row
 from src.report_builders import BuildResult, BusinessTripBuilder, GiftExpenseBuilder, RepresentativeExpenseBuilder
 from src.template_manager import TemplateManager
 from src.version import APP_VERSION_REVISION, app_version_label
@@ -449,6 +449,7 @@ def main() -> None:
             help="PDF, JPG, PNG, сканы и фотографии чеков. Распознавание можно поправить вручную.",
             key=f"receipt_files_{st.session_state.get('_receipt_upload_reset', 0)}",
         )
+    _ensure_ocr_runtime_for_uploads(receipt_files)
 
     st.subheader("Инициатор отчёта")
     selected_employee = _employee_selector(directory)
@@ -643,10 +644,16 @@ def _receipt_editor(receipt_files, report_type: str) -> list[Receipt]:
         receipt = _parse_uploaded_receipt_cached(uploaded).model_copy()
         if report_type == "gifts":
             receipt.expense_type = "подарки"
+        elif report_type == "representative_expenses":
+            receipt.expense_type = "ресторан"
         parsed.append(receipt)
     if not parsed:
         parsed = [Receipt(file_name="manual", amount=Decimal("1.00"), expense_type="прочее")]
-    parse_warnings = [f"{receipt.file_name}: {receipt.comment}" for receipt in parsed if receipt.comment]
+    parse_warnings = [
+        f"{receipt.file_name}: {receipt.comment}"
+        for receipt in parsed
+        if receipt.comment and ("Сумма не распознана" in receipt.comment or "Проверьте распознанные данные" in receipt.comment)
+    ]
     if parse_warnings:
         st.warning("Проверьте распознавание чеков:\n\n" + "\n".join(parse_warnings))
     frame = pd.DataFrame(
@@ -680,8 +687,43 @@ def _receipt_editor(receipt_files, report_type: str) -> list[Receipt]:
         receipt = receipt_from_table_row(row)
         if report_type == "gifts":
             receipt.expense_type = "подарки"
+        elif report_type == "representative_expenses":
+            receipt.expense_type = "ресторан"
         receipts.append(receipt)
     return receipts
+
+
+def _ensure_ocr_runtime_for_uploads(receipt_files) -> None:
+    if not receipt_files:
+        return
+    if not any(Path(uploaded.name).suffix.lower() in {".pdf", ".png", ".jpg", ".jpeg"} for uploaded in receipt_files):
+        return
+
+    status = ocr_runtime_status()
+    if status.available:
+        return
+
+    if not st.session_state.get("_receipt_ocr_install_attempted"):
+        with st.spinner("Подготавливаю встроенное распознавание чеков..."):
+            status = ensure_builtin_ocr_runtime()
+        st.session_state["_receipt_ocr_install_attempted"] = True
+        if status.available:
+            st.session_state.pop("_receipt_parse_cache", None)
+            st.success(f"OCR для сканов готов: {status.engine}")
+            st.rerun()
+
+    if st.button("Установить OCR для сканов", type="secondary"):
+        with st.spinner("Устанавливаю встроенное распознавание чеков..."):
+            status = ensure_builtin_ocr_runtime()
+        if status.available:
+            st.session_state.pop("_receipt_parse_cache", None)
+            st.success(f"OCR для сканов готов: {status.engine}")
+            st.rerun()
+
+    st.error(
+        "OCR для PDF/JPG-сканов пока недоступен. "
+        "Для чеков без текстового слоя автоматическое распознавание суммы и ФД не сработает."
+    )
 
 
 def _parse_uploaded_receipt_cached(uploaded) -> Receipt:

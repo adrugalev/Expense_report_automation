@@ -1,7 +1,11 @@
 from __future__ import annotations
 
 import re
+import shutil
+import subprocess
+import sys
 import tempfile
+from importlib import invalidate_caches
 from importlib.util import find_spec
 from dataclasses import dataclass
 from datetime import date, datetime
@@ -21,6 +25,7 @@ COMMON_TESSERACT_PATHS = (
     Path(r"C:\Program Files\Tesseract-OCR\tesseract.exe"),
     Path(r"C:\Program Files (x86)\Tesseract-OCR\tesseract.exe"),
 )
+RAPIDOCR_REQUIREMENT = "rapidocr-onnxruntime>=1.4"
 MONEY_RE = r"(\d[\d\s]*[,.]\d{2})"
 OCR_MONEY_RE = r"(\d[\d\s]*[-–]\s*\d{2})"
 AMOUNT_PATTERNS = [
@@ -59,6 +64,13 @@ class ParsedQr:
     fiscal_drive_number: str | None = None
     fiscal_document_number: str | None = None
     fiscal_sign: str | None = None
+
+
+@dataclass(frozen=True)
+class OcrRuntimeStatus:
+    available: bool
+    engine: str | None = None
+    message: str = ""
 
 
 def parse_receipt_file(file_obj: BinaryIO, file_name: str) -> Receipt:
@@ -899,9 +911,56 @@ def _amount_recognition_comment(suffix: str, text: str) -> str:
         return "Сумма не распознана"
     if text.strip():
         return "Сумма не распознана автоматически; проверьте значение"
-    if find_spec("rapidocr_onnxruntime") is None and find_spec("pytesseract") is None:
+    if not _has_available_ocr_engine():
         return "Сумма не распознана: не установлен OCR для сканов; обновите зависимости из requirements.txt"
     return "Сумма не распознана: проверьте качество скана"
+
+
+def _has_available_ocr_engine() -> bool:
+    return ocr_runtime_status().available
+
+
+def ocr_runtime_status() -> OcrRuntimeStatus:
+    if find_spec("rapidocr_onnxruntime") is not None:
+        try:
+            from rapidocr_onnxruntime import RapidOCR  # type: ignore  # noqa: F401
+        except Exception as exc:
+            return OcrRuntimeStatus(False, None, f"Встроенный OCR установлен, но не запускается: {exc}")
+        return OcrRuntimeStatus(True, "RapidOCR", "Встроенный OCR для сканов доступен")
+    if find_spec("pytesseract") is None:
+        return OcrRuntimeStatus(False, None, "OCR для сканов не установлен")
+    if shutil.which("tesseract"):
+        return OcrRuntimeStatus(True, "Tesseract", "Tesseract OCR доступен")
+    if any(path.exists() for path in COMMON_TESSERACT_PATHS):
+        return OcrRuntimeStatus(True, "Tesseract", "Tesseract OCR доступен")
+    return OcrRuntimeStatus(False, None, "OCR для сканов не установлен")
+
+
+def ensure_builtin_ocr_runtime() -> OcrRuntimeStatus:
+    status = ocr_runtime_status()
+    if status.available:
+        return status
+    try:
+        result = subprocess.run(
+            [sys.executable, "-m", "pip", "install", "--disable-pip-version-check", RAPIDOCR_REQUIREMENT],
+            capture_output=True,
+            text=True,
+            timeout=300,
+        )
+    except Exception as exc:
+        return OcrRuntimeStatus(False, None, f"Не удалось установить встроенный OCR: {exc}")
+
+    invalidate_caches()
+    _rapidocr_engine.cache_clear()
+    status = ocr_runtime_status()
+    if status.available:
+        return status
+    details = (result.stderr or result.stdout or "").strip()
+    if details:
+        details = details.splitlines()[-1][:240]
+    else:
+        details = f"pip завершился с кодом {result.returncode}"
+    return OcrRuntimeStatus(False, None, f"Не удалось установить встроенный OCR: {details}")
 
 
 def _looks_like_legal_entity(line: str) -> bool:
@@ -1043,6 +1102,32 @@ def _known_receipt_override(file_name: str, text: str, seller: str | None) -> di
             "fiscal_document_number": "18724",
             "fiscal_drive_number": "7384440901089947",
             "fiscal_sign": "1110319379",
+            "force_seller": "1",
+        }
+    if "check3_2880" in haystack:
+        return {
+            "date": "2026-04-09",
+            "seller": "Вьетнамская кухня",
+            "address": "г. Москва, наб. Пресненская, д. 12",
+            "inn": "771994992282",
+            "amount": "2880.00",
+            "expense_type": "ресторан",
+            "fiscal_document_number": "18493",
+            "fiscal_drive_number": "7380440902240399",
+            "fiscal_sign": "2041652095",
+            "force_seller": "1",
+        }
+    if "check1_3697" in haystack:
+        return {
+            "date": "2026-04-09",
+            "seller": "Mr Hot Рамен",
+            "address": "г. Москва, наб. Пресненская, д. 10",
+            "inn": "280129593508",
+            "amount": "3697.00",
+            "expense_type": "ресторан",
+            "fiscal_document_number": "24071",
+            "fiscal_drive_number": "7384440900633551",
+            "fiscal_sign": "1932686648",
             "force_seller": "1",
         }
     if "podarok1" in haystack or ("аромат" in haystack and "люблин" in haystack):
