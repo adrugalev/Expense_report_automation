@@ -26,6 +26,7 @@ COMMON_TESSERACT_PATHS = (
     Path(r"C:\Program Files (x86)\Tesseract-OCR\tesseract.exe"),
 )
 RAPIDOCR_REQUIREMENT = "rapidocr-onnxruntime>=1.4"
+RAPIDOCR_MAX_PYTHON = (3, 13)
 MONEY_RE = r"(\d[\d\s]*[,.]\d{2})"
 OCR_MONEY_RE = r"(\d[\d\s]*[-–]\s*\d{2})"
 AMOUNT_PATTERNS = [
@@ -911,8 +912,9 @@ def _amount_recognition_comment(suffix: str, text: str) -> str:
         return "Сумма не распознана"
     if text.strip():
         return "Сумма не распознана автоматически; проверьте значение"
-    if not _has_available_ocr_engine():
-        return "Сумма не распознана: не установлен OCR для сканов; обновите зависимости из requirements.txt"
+    status = ocr_runtime_status()
+    if not status.available:
+        return f"Сумма не распознана: {status.message}"
     return "Сумма не распознана: проверьте качество скана"
 
 
@@ -933,12 +935,24 @@ def ocr_runtime_status() -> OcrRuntimeStatus:
         return OcrRuntimeStatus(True, "Tesseract", "Tesseract OCR доступен")
     if any(path.exists() for path in COMMON_TESSERACT_PATHS):
         return OcrRuntimeStatus(True, "Tesseract", "Tesseract OCR доступен")
+    if sys.version_info >= RAPIDOCR_MAX_PYTHON:
+        return OcrRuntimeStatus(
+            False,
+            None,
+            (
+                f"OCR для сканов не установлен. Текущий Python {sys.version_info.major}.{sys.version_info.minor}; "
+                "встроенный RapidOCR поддерживает Python младше 3.13. Запустите приложение на Python 3.12 "
+                "или используйте встроенный Tesseract."
+            ),
+        )
     return OcrRuntimeStatus(False, None, "OCR для сканов не установлен")
 
 
 def ensure_builtin_ocr_runtime() -> OcrRuntimeStatus:
     status = ocr_runtime_status()
     if status.available:
+        return status
+    if sys.version_info >= RAPIDOCR_MAX_PYTHON:
         return status
     try:
         result = subprocess.run(

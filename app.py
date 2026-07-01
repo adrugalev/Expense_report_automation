@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import html
+import sys
 from io import BytesIO
 from zipfile import ZIP_DEFLATED, ZipFile
 from datetime import date
@@ -657,6 +658,14 @@ def _receipt_editor(receipt_files, report_type: str) -> list[Receipt]:
     if parse_warnings:
         st.warning("Проверьте распознавание чеков:\n\n" + "\n".join(parse_warnings))
         if any("OCR" in warning for warning in parse_warnings):
+            status = ocr_runtime_status()
+            with st.expander("Диагностика OCR"):
+                st.write(f"Python: `{sys.version.split()[0]}`")
+                st.write(f"Путь: `{sys.executable}`")
+                st.write(f"OCR: {status.message}")
+                install_error = st.session_state.get("_receipt_ocr_install_error")
+                if install_error:
+                    st.write(f"Последняя ошибка установки: {install_error}")
             if st.button("Установить OCR для сканов", type="secondary", key="install_receipt_ocr_after_warning"):
                 with st.spinner("Устанавливаю встроенное распознавание чеков..."):
                     status = ensure_builtin_ocr_runtime()
@@ -664,6 +673,7 @@ def _receipt_editor(receipt_files, report_type: str) -> list[Receipt]:
                     st.session_state.pop("_receipt_parse_cache", None)
                     st.success(f"OCR для сканов готов: {status.engine}")
                     st.rerun()
+                st.session_state["_receipt_ocr_install_error"] = status.message
                 st.error(status.message)
     frame = pd.DataFrame(
         [
