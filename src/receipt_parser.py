@@ -21,7 +21,11 @@ from .models import Receipt
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 LOCAL_TESSDATA_DIR = PROJECT_ROOT / "data" / "tessdata"
+VENDORED_TESSERACT_DIR = PROJECT_ROOT / "vendor" / "tesseract"
 COMMON_TESSERACT_PATHS = (
+    VENDORED_TESSERACT_DIR / "tesseract.exe",
+    VENDORED_TESSERACT_DIR / "bin" / "tesseract.exe",
+    VENDORED_TESSERACT_DIR / "bin" / "tesseract",
     Path(r"C:\Program Files\Tesseract-OCR\tesseract.exe"),
     Path(r"C:\Program Files (x86)\Tesseract-OCR\tesseract.exe"),
 )
@@ -345,8 +349,8 @@ def extract_seller(text: str) -> str | None:
     for line in lines[:8]:
         lower = line.lower()
         if any(marker in lower for marker in ("ооо", "общество", "ип ", "ао ", "яндекс.такси", "ресторан", "кафе")):
-            return line[:160]
-    return lines[0][:160] if lines else None
+            return _clean_seller_candidate(line)
+    return _clean_seller_candidate(lines[0]) if lines else None
 
 
 def extract_settlement_place(text: str) -> str | None:
@@ -623,7 +627,7 @@ def _try_ocr_pdf(path: Path) -> str:
         from pdf2image import convert_from_path  # type: ignore
 
         for image in convert_from_path(path, dpi=260):
-            text = _try_ocr_pil_image(image)
+            text = _try_ocr_pil_image_variants(image)
             if text.strip():
                 texts.append(text)
     except Exception:
@@ -662,13 +666,15 @@ def _try_ocr_image_bytes(data: bytes) -> str:
 
 def _try_ocr_pil_image_variants(image, psm_modes: tuple[str, ...] = ("6",)) -> str:
     texts: list[str] = []
-    rapidocr_text = _try_rapidocr_pil_image(image)
-    if rapidocr_text.strip():
-        return _join_ocr_texts([rapidocr_text])
     for psm in psm_modes:
         text = _try_ocr_pil_image(image, psm=psm)
         if text.strip():
             texts.append(text)
+    if texts:
+        return _join_ocr_texts(texts)
+    rapidocr_text = _try_rapidocr_pil_image(image)
+    if rapidocr_text.strip():
+        texts.append(rapidocr_text)
     return _join_ocr_texts(texts)
 
 
@@ -691,8 +697,9 @@ def _try_ocr_pil_image(image, psm: str = "6") -> str:
 
         _configure_tesseract(pytesseract)
         config_parts = ["--psm", psm]
-        if LOCAL_TESSDATA_DIR.exists():
-            config_parts.extend(["--tessdata-dir", str(LOCAL_TESSDATA_DIR)])
+        tessdata_dir = _tessdata_dir()
+        if tessdata_dir:
+            config_parts.extend(["--tessdata-dir", str(tessdata_dir)])
         return pytesseract.image_to_string(image, lang="rus+eng", config=" ".join(config_parts))
     except Exception:
         return ""
@@ -726,6 +733,18 @@ def _configure_tesseract(pytesseract_module) -> None:
         if path.exists():
             pytesseract_module.pytesseract.tesseract_cmd = str(path)
             return
+
+
+def _tessdata_dir() -> Path | None:
+    for path in (
+        VENDORED_TESSERACT_DIR / "tessdata",
+        VENDORED_TESSERACT_DIR / "share" / "tessdata",
+        VENDORED_TESSERACT_DIR / "share" / "tessdata_fast",
+        LOCAL_TESSDATA_DIR,
+    ):
+        if (path / "rus.traineddata").exists() and (path / "eng.traineddata").exists():
+            return path
+    return None
 
 
 def _try_read_qr_from_pdf(path: Path) -> str | None:
@@ -925,18 +944,14 @@ def _has_available_ocr_engine() -> bool:
 
 
 def ocr_runtime_status() -> OcrRuntimeStatus:
+    if _tesseract_command_available():
+        return OcrRuntimeStatus(True, "Tesseract", "Tesseract OCR доступен")
     if find_spec("rapidocr_onnxruntime") is not None:
         try:
             from rapidocr_onnxruntime import RapidOCR  # type: ignore  # noqa: F401
         except Exception as exc:
             return OcrRuntimeStatus(False, None, f"Встроенный OCR установлен, но не запускается: {exc}")
         return OcrRuntimeStatus(True, "RapidOCR", "Встроенный OCR для сканов доступен")
-    if find_spec("pytesseract") is None:
-        return OcrRuntimeStatus(False, None, "OCR для сканов не установлен")
-    if shutil.which("tesseract"):
-        return OcrRuntimeStatus(True, "Tesseract", "Tesseract OCR доступен")
-    if any(path.exists() for path in COMMON_TESSERACT_PATHS):
-        return OcrRuntimeStatus(True, "Tesseract", "Tesseract OCR доступен")
     if sys.version_info >= RAPIDOCR_MAX_PYTHON:
         return OcrRuntimeStatus(
             False,
@@ -948,6 +963,12 @@ def ocr_runtime_status() -> OcrRuntimeStatus:
             ),
         )
     return OcrRuntimeStatus(False, None, "OCR для сканов не установлен")
+
+
+def _tesseract_command_available() -> bool:
+    if find_spec("pytesseract") is None:
+        return False
+    return bool(shutil.which("tesseract")) or any(path.exists() for path in COMMON_TESSERACT_PATHS)
 
 
 def ensure_builtin_ocr_runtime() -> OcrRuntimeStatus:
@@ -1118,6 +1139,31 @@ def _is_bad_restaurant_name(value: str | None) -> bool:
         return True
     normalized = re.sub(r"[^A-Za-zА-Яа-яЁё0-9]+", "", value)
     return len(normalized) < 3 or bool(re.search(r"(?i)(?:уп\s+в|нв|инвияг|расчетов|кт\s+00)", value))
+
+
+def _clean_seller_candidate(value: str) -> str | None:
+    value = re.sub(r"\s+", " ", value).strip(" .,;:!-")
+    if not value or _is_bad_restaurant_name(value) or _looks_like_ocr_gibberish(value):
+        return None
+    return value[:160]
+
+
+def _looks_like_ocr_gibberish(value: str) -> bool:
+    cleaned = re.sub(r"[^A-Za-zА-Яа-яЁё0-9]+", "", value)
+    if len(cleaned) < 4:
+        return True
+    cyrillic = len(re.findall(r"[А-Яа-яЁё]", value))
+    latin = len(re.findall(r"[A-Za-z]", value))
+    letters = cyrillic + latin
+    if not letters:
+        return True
+    if cyrillic == 0 and latin >= 6:
+        vowels = len(re.findall(r"(?i)[aeiouy]", value))
+        if vowels / latin < 0.28:
+            return True
+        if re.search(r"(?i)(?:NOXANOBAT|AKAAEM|FOPORUK|NOCPO|NOSPO|KACCN|YEK)", value):
+            return True
+    return False
 
 
 def _known_receipt_override(file_name: str, text: str, seller: str | None) -> dict[str, str] | None:
