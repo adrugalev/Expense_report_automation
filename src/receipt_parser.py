@@ -5,9 +5,10 @@ import tempfile
 from dataclasses import dataclass
 from datetime import date, datetime
 from decimal import Decimal
+from functools import lru_cache
 from pathlib import Path
 from typing import BinaryIO
-from urllib.parse import parse_qs
+from urllib.parse import parse_qs, urlsplit
 
 from .address_lookup import lookup_address_online, merge_online_address, should_lookup_address
 from .models import Receipt
@@ -31,9 +32,10 @@ AMOUNT_PATTERNS = [
     re.compile(rf"(?im)^\s*.*(?:безналич|зналич|налич).*?[=:]\s*{MONEY_RE}\s*$"),
     re.compile(rf"(?im)^\s*ИТОГО\s+{MONEY_RE}\s*$"),
     re.compile(rf"(?:итог|итого|сумма|к\s*оплате)[^\d]{{0,30}}{MONEY_RE}", re.IGNORECASE),
-    re.compile(rf"{MONEY_RE}\s*(?:руб|₽)", re.IGNORECASE),
+    re.compile(rf"{MONEY_RE}\s*(?:руб|₽|rub)\b", re.IGNORECASE),
 ]
 DATE_PATTERNS = [
+    re.compile(r"\b(\d{2})[./-](\d{2})[./-](\d{2})(?:\s*(\d{2}):?(\d{2}))\b"),
     re.compile(r"\b(\d{2})[./-](\d{2})[./-](\d{2,4})(?:\s+(\d{2}):(\d{2}))?\b"),
     re.compile(r"\b(\d{4})[./-](\d{2})[./-](\d{2})(?:[T\s](\d{2}):?(\d{2}))?\b"),
 ]
@@ -154,7 +156,8 @@ def parse_receipt_path(path: Path, file_name: str | None = None) -> Receipt:
 
 
 def parse_qr_payload(qr_raw: str) -> ParsedQr:
-    values = {key: items[0] for key, items in parse_qs(qr_raw, keep_blank_values=True).items() if items}
+    query = _qr_query_string(qr_raw)
+    values = {key: items[0] for key, items in parse_qs(query, keep_blank_values=True).items() if items}
     return ParsedQr(
         raw=qr_raw,
         receipt_date=_parse_qr_date(values.get("t")),
@@ -163,6 +166,11 @@ def parse_qr_payload(qr_raw: str) -> ParsedQr:
         fiscal_document_number=values.get("i"),
         fiscal_sign=values.get("fp"),
     )
+
+
+def _qr_query_string(qr_raw: str) -> str:
+    parsed = urlsplit(qr_raw)
+    return parsed.query if parsed.query else qr_raw
 
 
 def _qr_amount(parsed_qr: ParsedQr | None) -> Decimal | None:
@@ -207,7 +215,7 @@ def extract_amount(text: str) -> Decimal | None:
         if match:
             return _parse_decimal(match.group(1))
     candidates: list[Decimal] = []
-    for match in re.finditer(r"\b(\d{4,6}[,.]\d[0OО\(\)])\b", normalized):
+    for match in re.finditer(r"(?<!\d)(\d{3,7}[,.]\d[\d0OОо\(\)])\b", normalized):
         value = _parse_decimal(match.group(1))
         if value and value >= Decimal("1000.00"):
             candidates.append(value)
@@ -419,24 +427,45 @@ def extract_fiscal_drive_number(text: str) -> str | None:
 
 
 def extract_fiscal_sign(text: str) -> str | None:
-    return extract_field(text, FP_PATTERN)
+    exact = extract_field(text, FP_PATTERN)
+    if exact:
+        return exact
+    lines = _normalized_lines(text)
+    fiscal_drive_line_index = _fuzzy_fiscal_drive_line_index(lines)
+    if fiscal_drive_line_index is None:
+        return None
+    seen_fiscal_document = False
+    for line in lines[fiscal_drive_line_index + 1 : fiscal_drive_line_index + 8]:
+        if not seen_fiscal_document:
+            if _short_fiscal_document_candidates(line):
+                seen_fiscal_document = True
+            continue
+        if re.search(r"(?i)(?:ккт|kkt|rkt|инн|inn|чек|смена|smena)", line):
+            continue
+        numbers = re.findall(r"\b\d{9,12}\b", line)
+        if numbers:
+            return numbers[-1]
+    return None
 
 
 def _fuzzy_fiscal_drive_line_index(lines: list[str]) -> int | None:
+    fallback_index = None
     for index, line in enumerate(lines):
         lower = line.lower()
-        if "kkt" in lower or "ккт" in lower or "инн" in lower:
+        if "kkt" in lower or "rkt" in lower or "ккт" in lower or "инн" in lower:
             continue
         if any(marker in lower for marker in ("=", "шт", "wr.", " л", "*")):
             continue
         digits = re.sub(r"\D+", "", line)
         if re.search(r"\d{16}", digits):
-            return index
-    return None
+            fallback_index = index
+            if digits[-16:].startswith("7"):
+                return index
+    return fallback_index
 
 
 def _short_fiscal_document_candidates(line: str) -> list[str]:
-    if re.search(r"(?i)(?:ккт|kkt|инн|inn|сумма|итог|заказ|смена|чек)", line):
+    if re.search(r"(?i)(?:ккт|kkt|rkt|инн|inn|сумма|итог|заказ|смена|чек)", line):
         return []
     numbers = re.findall(r"(?<![=.,])\b\d{1,8}\b(?![.,])", line)
     candidates: list[str] = []
@@ -466,7 +495,7 @@ def guess_expense_type(text: str, file_name: str) -> str:
         word in haystack for word in ("ресторан", "кафе", "coffee", "restaurant", "ramen", "bbq", "smoke", "snoke", "brisket", "брискет")
     ):
         return "ресторан"
-    if any(word in haystack for word in ("подар", "gift", "сувенир")):
+    if any(word in haystack for word in ("подар", "podar", "gift", "сувенир", "souvenir")):
         return "подарки"
     return "прочее"
 
@@ -586,7 +615,7 @@ def _try_ocr_pdf_requisites(path: Path) -> str:
                 image = page.to_image(resolution=220).original
                 width, height = image.size
                 crop = image.crop((0, int(height * 0.55), int(width * 0.58), height))
-                text = _try_ocr_pil_image(crop)
+                text = _try_ocr_pil_image_variants(crop)
                 if text.strip():
                     texts.append(text)
     except Exception:
@@ -607,6 +636,9 @@ def _try_ocr_image_bytes(data: bytes) -> str:
 
 def _try_ocr_pil_image_variants(image, psm_modes: tuple[str, ...] = ("6",)) -> str:
     texts: list[str] = []
+    rapidocr_text = _try_rapidocr_pil_image(image)
+    if rapidocr_text.strip():
+        return _join_ocr_texts([rapidocr_text])
     for psm in psm_modes:
         text = _try_ocr_pil_image(image, psm=psm)
         if text.strip():
@@ -640,6 +672,26 @@ def _try_ocr_pil_image(image, psm: str = "6") -> str:
         return ""
 
 
+def _try_rapidocr_pil_image(image) -> str:
+    try:
+        import numpy as np
+
+        engine = _rapidocr_engine()
+        result, _ = engine(np.array(image.convert("RGB")))
+        if not result:
+            return ""
+        return "\n".join(str(line[1]) for line in result if len(line) >= 2 and str(line[1]).strip())
+    except Exception:
+        return ""
+
+
+@lru_cache(maxsize=1)
+def _rapidocr_engine():
+    from rapidocr_onnxruntime import RapidOCR  # type: ignore
+
+    return RapidOCR()
+
+
 def _configure_tesseract(pytesseract_module) -> None:
     current = getattr(pytesseract_module.pytesseract, "tesseract_cmd", "tesseract")
     if current and current != "tesseract" and Path(current).exists():
@@ -658,6 +710,21 @@ def _try_read_qr_from_pdf(path: Path) -> str | None:
             for page in pdf.pages:
                 image = page.to_image(resolution=220).original
                 decoded = _decode_qr_pil_image(image)
+                if decoded:
+                    return decoded
+    except Exception:
+        pass
+    return _try_read_qr_from_pdf_images(path)
+
+
+def _try_read_qr_from_pdf_images(path: Path) -> str | None:
+    try:
+        from pypdf import PdfReader  # type: ignore
+
+        reader = PdfReader(path)
+        for page in reader.pages:
+            for image in page.images:
+                decoded = _decode_qr_image_bytes(image.data)
                 if decoded:
                     return decoded
     except Exception:
@@ -688,25 +755,80 @@ def _decode_qr_pil_image(image) -> str | None:
         return None
 
 
+def _decode_qr_image_bytes(data: bytes) -> str | None:
+    try:
+        from io import BytesIO
+
+        from PIL import Image
+
+        return _decode_qr_pil_image(Image.open(BytesIO(data)))
+    except Exception:
+        return None
+
+
 def _decode_qr_cv2_image(image) -> str | None:
     try:
         import cv2
 
         detector = cv2.QRCodeDetector()
-        for scale in (1.0, 1.5, 2.0):
-            candidate = image
-            if scale != 1.0:
-                candidate = cv2.resize(image, None, fx=scale, fy=scale, interpolation=cv2.INTER_CUBIC)
-            data, points, _ = detector.detectAndDecode(candidate)
-            if data:
-                return data
-            ok, decoded_info, _, _ = detector.detectAndDecodeMulti(candidate)
-            if ok:
-                for item in decoded_info:
-                    if item:
-                        return item
+        decoded_items: list[str] = []
+        for candidate in _qr_candidate_images(image):
+            for scale in (1.0, 1.5, 2.0, 3.0):
+                scaled = candidate
+                if scale != 1.0:
+                    scaled = cv2.resize(candidate, None, fx=scale, fy=scale, interpolation=cv2.INTER_CUBIC)
+                ok, decoded_info, _, _ = detector.detectAndDecodeMulti(scaled)
+                if ok:
+                    decoded_items.extend(item for item in decoded_info if item)
+                data, _, _ = detector.detectAndDecode(scaled)
+                if data:
+                    decoded_items.append(data)
+                best = _best_receipt_qr_payload(decoded_items)
+                if best:
+                    return best
     except Exception:
         return None
+    return _best_qr_payload(decoded_items)
+
+
+def _qr_candidate_images(image):
+    yield image
+    height, width = image.shape[:2]
+    if height <= width * 2:
+        return
+
+    window_height = min(height, max(width, 900))
+    step = max(width // 2, 180)
+    for top in range(0, max(height - window_height + 1, 1), step):
+        bottom = min(height, top + window_height)
+        yield image[top:bottom, :]
+    if height > window_height:
+        yield image[height - window_height : height, :]
+
+
+def _best_qr_payload(decoded_items: list[str]) -> str | None:
+    unique_items = list(dict.fromkeys(item.strip() for item in decoded_items if item and item.strip()))
+    if not unique_items:
+        return None
+    for item in unique_items:
+        parsed = parse_qr_payload(item)
+        if parsed.amount and parsed.fiscal_drive_number and parsed.fiscal_document_number and parsed.fiscal_sign:
+            return item
+    for item in unique_items:
+        if parse_qr_payload(item).amount:
+            return item
+    return unique_items[0]
+
+
+def _best_receipt_qr_payload(decoded_items: list[str]) -> str | None:
+    unique_items = list(dict.fromkeys(item.strip() for item in decoded_items if item and item.strip()))
+    for item in unique_items:
+        parsed = parse_qr_payload(item)
+        if parsed.amount and parsed.fiscal_drive_number and parsed.fiscal_document_number and parsed.fiscal_sign:
+            return item
+    for item in unique_items:
+        if parse_qr_payload(item).amount:
+            return item
     return None
 
 

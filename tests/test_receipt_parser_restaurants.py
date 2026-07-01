@@ -10,6 +10,7 @@ from src.receipt_parser import (
     extract_date,
     extract_fiscal_document_number,
     extract_fiscal_drive_number,
+    extract_fiscal_sign,
     extract_inn,
     extract_seller,
     guess_expense_type,
@@ -18,6 +19,10 @@ from src.receipt_parser import (
 
 
 LOCAL_SCAN_DIR = Path("C:/Users/Drugalev/Dropbox/Сканы")
+ANTTEQ_GIFT_RECEIPT_PATHS = (
+    LOCAL_SCAN_DIR / "check_podarki_antteq.pdf",
+    Path("D:/Dropbox/Сканы/check_podarki_antteq.pdf"),
+)
 
 
 def test_extract_restaurant_name_and_address_from_ooo_receipt_text():
@@ -179,6 +184,27 @@ def test_extract_amount_and_fiscal_document_from_requisites_ocr_text():
     assert extract_fiscal_drive_number(text) == "7384440900633591"
 
 
+def test_extract_amount_and_fiscal_fields_from_rapidocr_numeric_text():
+    text = """
+    CUMMA:
+    19520.96 RUB
+    3HKKT 0255100106679
+    PHKKT0006650367055073
+    Q7384440901089947
+    HH7710161911
+    PHEHA02309EK0017
+    18724
+    1110319379
+    18.06.2615:32
+    """
+
+    assert extract_amount(text) == Decimal("19520.96")
+    assert extract_date(text) == date(2026, 6, 18)
+    assert extract_fiscal_document_number(text) == "18724"
+    assert extract_fiscal_drive_number(text) == "7384440901089947"
+    assert extract_fiscal_sign(text) == "1110319379"
+
+
 def test_extract_fiscal_drive_number_ignores_leading_ocr_digit():
     text = """
     9Н 7364440900633551
@@ -249,3 +275,21 @@ def test_parse_50_kostey_receipt_pdf():
     assert receipt.date == date(2024, 10, 2)
     assert receipt.amount == Decimal("18980.00")
     assert receipt.fiscal_document_number == "31619"
+
+
+@pytest.mark.skipif(
+    not any(path.exists() for path in ANTTEQ_GIFT_RECEIPT_PATHS),
+    reason="local Antteq gift receipt fixture is unavailable",
+)
+def test_parse_antteq_gift_receipt_pdf_without_tesseract():
+    from src.receipt_parser import parse_receipt_path
+
+    receipt_path = next(path for path in ANTTEQ_GIFT_RECEIPT_PATHS if path.exists())
+    receipt = parse_receipt_path(receipt_path)
+
+    assert receipt.date == date(2026, 6, 18)
+    assert receipt.amount == Decimal("19520.96")
+    assert receipt.expense_type == "подарки"
+    assert receipt.fiscal_document_number == "18724"
+    assert receipt.fiscal_drive_number == "7384440901089947"
+    assert receipt.fiscal_sign == "1110319379"
