@@ -26,6 +26,8 @@ COMMON_TESSERACT_PATHS = (
     Path(r"C:\Program Files (x86)\Tesseract-OCR\tesseract.exe"),
 )
 RAPIDOCR_REQUIREMENT = "rapidocr-onnxruntime>=1.4"
+HEADLESS_OPENCV_REQUIREMENT = "opencv-python-headless>=4.10"
+CONFLICTING_OPENCV_PACKAGES = ("opencv-python", "opencv-contrib-python")
 RAPIDOCR_MAX_PYTHON = (3, 13)
 MONEY_RE = r"(\d[\d\s]*[,.]\d{2})"
 OCR_MONEY_RE = r"(\d[\d\s]*[-–]\s*\d{2})"
@@ -955,12 +957,38 @@ def ensure_builtin_ocr_runtime() -> OcrRuntimeStatus:
     if sys.version_info >= RAPIDOCR_MAX_PYTHON:
         return status
     try:
+        _remove_conflicting_opencv_packages()
         result = subprocess.run(
-            [sys.executable, "-m", "pip", "install", "--disable-pip-version-check", RAPIDOCR_REQUIREMENT],
+            [
+                sys.executable,
+                "-m",
+                "pip",
+                "install",
+                "--disable-pip-version-check",
+                "--upgrade",
+                RAPIDOCR_REQUIREMENT,
+            ],
             capture_output=True,
             text=True,
             timeout=300,
         )
+        if result.returncode == 0:
+            _remove_conflicting_opencv_packages()
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    "-m",
+                    "pip",
+                    "install",
+                    "--disable-pip-version-check",
+                    "--upgrade",
+                    "--force-reinstall",
+                    HEADLESS_OPENCV_REQUIREMENT,
+                ],
+                capture_output=True,
+                text=True,
+                timeout=300,
+            )
     except Exception as exc:
         return OcrRuntimeStatus(False, None, f"Не удалось установить встроенный OCR: {exc}")
 
@@ -975,6 +1003,23 @@ def ensure_builtin_ocr_runtime() -> OcrRuntimeStatus:
     else:
         details = f"pip завершился с кодом {result.returncode}"
     return OcrRuntimeStatus(False, None, f"Не удалось установить встроенный OCR: {details}")
+
+
+def _remove_conflicting_opencv_packages() -> None:
+    subprocess.run(
+        [sys.executable, "-m", "pip", "uninstall", "-y", *CONFLICTING_OPENCV_PACKAGES],
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+    for module_name in list(sys.modules):
+        if (
+            module_name == "cv2"
+            or module_name.startswith("cv2.")
+            or module_name == "rapidocr_onnxruntime"
+            or module_name.startswith("rapidocr_onnxruntime.")
+        ):
+            sys.modules.pop(module_name, None)
 
 
 def _looks_like_legal_entity(line: str) -> bool:
