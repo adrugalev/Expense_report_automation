@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import re
 import tempfile
+from importlib.util import find_spec
 from dataclasses import dataclass
 from datetime import date, datetime
 from decimal import Decimal
@@ -104,6 +105,7 @@ def parse_receipt_path(path: Path, file_name: str | None = None) -> Receipt:
             fiscal_drive_number = fiscal_drive_number or extract_fiscal_drive_number(combined_text)
             fiscal_sign = fiscal_sign or extract_fiscal_sign(combined_text)
             text = combined_text
+    amount_was_missing = amount is None
     amount = amount or Decimal("1.00")
     has_useful_data = bool(text.strip() or qr_raw)
     seller = extract_seller(text) or _infer_seller_name(file_name)
@@ -121,6 +123,8 @@ def parse_receipt_path(path: Path, file_name: str | None = None) -> Receipt:
         fiscal_sign = known_receipt.get("fiscal_sign") or fiscal_sign
     expense_type = guess_expense_type(text, file_name)
     comment = None if has_useful_data else "Проверьте распознанные данные"
+    if amount_was_missing and amount == Decimal("1.00"):
+        comment = _append_comment(comment, _amount_recognition_comment(suffix, text))
     if seller and (expense_type == "ресторан" or should_lookup_address(address)):
         online_address = lookup_address_online(seller, address)
         if online_address:
@@ -881,6 +885,16 @@ def _append_comment(current: str | None, addition: str) -> str:
     if addition in current:
         return current
     return f"{current}; {addition}"
+
+
+def _amount_recognition_comment(suffix: str, text: str) -> str:
+    if suffix not in {".pdf", ".png", ".jpg", ".jpeg"}:
+        return "Сумма не распознана"
+    if text.strip():
+        return "Сумма не распознана автоматически; проверьте значение"
+    if find_spec("rapidocr_onnxruntime") is None and find_spec("pytesseract") is None:
+        return "Сумма не распознана: не установлен OCR для сканов; обновите зависимости из requirements.txt"
+    return "Сумма не распознана: проверьте качество скана"
 
 
 def _looks_like_legal_entity(line: str) -> bool:

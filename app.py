@@ -18,7 +18,7 @@ from src.models import BusinessTripReport, GiftExpenseReport, Receipt, Represent
 from src.receipt_parser import parse_receipt_file, receipt_from_table_row
 from src.report_builders import BuildResult, BusinessTripBuilder, GiftExpenseBuilder, RepresentativeExpenseBuilder
 from src.template_manager import TemplateManager
-from src.version import app_version_label
+from src.version import APP_VERSION_REVISION, app_version_label
 
 
 PROJECT_ROOT = Path(__file__).resolve().parent
@@ -683,7 +683,7 @@ def _receipt_editor(receipt_files, report_type: str) -> list[Receipt]:
 
 def _parse_uploaded_receipt_cached(uploaded) -> Receipt:
     payload = uploaded.getvalue()
-    cache_key = f"{uploaded.name}:{len(payload)}:{hashlib.sha1(payload).hexdigest()}"
+    cache_key = f"v{APP_VERSION_REVISION}:{uploaded.name}:{len(payload)}:{hashlib.sha1(payload).hexdigest()}"
     cache = st.session_state.setdefault("_receipt_parse_cache", {})
     if cache_key not in cache:
         cache[cache_key] = parse_receipt_file(BytesIO(payload), uploaded.name)
