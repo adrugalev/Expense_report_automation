@@ -646,6 +646,9 @@ def _receipt_editor(receipt_files, report_type: str) -> list[Receipt]:
         parsed.append(receipt)
     if not parsed:
         parsed = [Receipt(file_name="manual", amount=Decimal("1.00"), expense_type="прочее")]
+    parse_warnings = [f"{receipt.file_name}: {receipt.comment}" for receipt in parsed if receipt.comment]
+    if parse_warnings:
+        st.warning("Проверьте распознавание чеков:\n\n" + "\n".join(parse_warnings))
     frame = pd.DataFrame(
         [
             {
