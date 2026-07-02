@@ -29,10 +29,7 @@ def test_lookup_address_online_uses_nominatim(monkeypatch):
 
     monkeypatch.setattr("src.address_lookup.urlopen", lambda request, timeout: Response())
 
-    result = lookup_address_online(
-        "Osteria Mario & ШВИЛИ",
-        'Г. Москва, Вн. Тер.Г. "“*"-"ЁЪ} ВЛЬНЫЙ СКРУГ ПРОСлект Вернадско',
-    )
+    result = lookup_address_online("Новый ресторан", 'Г. Москва, Вн. Тер.Г. "“*"-"ЁЪ} ВЛЬНЫЙ СКРУГ ПРОСлект Вернадско')
 
     assert result
     assert result.address == "г. Москва, проспект Вернадского, 119415"

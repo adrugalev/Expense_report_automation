@@ -1095,6 +1095,8 @@ def _clean_settlement_place(value: str) -> str | None:
         return "Юаньян"
     if re.search(r"(?i)50\s*кост", value):
         return "50 костей"
+    if _looks_like_rule_taproom(value):
+        return "Бар RULE taproom"
     osteria_match = re.search(r"(?i)(osteria\s+mario.*)", value)
     if osteria_match:
         value = osteria_match.group(1)
@@ -1122,6 +1124,8 @@ def _is_generic_restaurant_name(value: str) -> bool:
 def _infer_restaurant_name(text: str) -> str | None:
     normalized = normalize_receipt_text(text).lower().replace("ё", "е")
     normalized_ascii = normalized.replace("в", "b").replace("о", "o")
+    if _looks_like_rule_taproom(normalized) or "7704310379" in normalized or "староваг" in normalized or "барчик" in normalized:
+        return "Бар RULE taproom"
     if _looks_like_mr_hot_ramen(normalized) or (
         "280129593508" in normalized and ("преснен" in normalized or "pamen" in normalized or "hot" in normalized)
     ):
@@ -1218,6 +1222,16 @@ def _looks_like_mr_hot_ramen(value: str) -> bool:
     )
 
 
+def _looks_like_rule_taproom(value: str) -> bool:
+    normalized = value.lower().replace("ё", "е")
+    if "rule" not in normalized and "руле" not in normalized:
+        return False
+    return bool(
+        re.search(r"(?i)(?:tap\s*room|taproom|taproo[mn]|таргоом|тапроом|сангоом|саггоом|фаргоом)", normalized)
+        or re.search(r"(?i)\bбар\s+rule\b", normalized)
+    )
+
+
 def _known_restaurant_match(
     file_name: str,
     text: str,
@@ -1227,6 +1241,16 @@ def _known_restaurant_match(
 ) -> dict[str, str] | None:
     haystack = f"{file_name}\n{text}\n{seller or ''}\n{address or ''}\n{inn or ''}".lower().replace("ё", "е")
     profiles: tuple[tuple[str, str, tuple[str, ...]], ...] = (
+        (
+            "Бар RULE taproom",
+            "г. Москва, Староваганьковский пер., д. 19, стр. 7",
+            (
+                r"rule.{0,20}(?:tap\s*room|taproom|taproo[mn]|таргоом|тапроом|сангоом|саггоом|фаргоом)",
+                r"барчик",
+                r"7704310379",
+                r"староваг",
+            ),
+        ),
         (
             "Mr Hot Рамен",
             "г. Москва, наб. Пресненская, д. 10",
@@ -1293,6 +1317,7 @@ def _street_marker(address: str) -> str | None:
     normalized = address.lower().replace("ё", "е")
     for marker in (
         "преснен",
+        "староваг",
         "вернад",
         "вавил",
         "люблин",
@@ -1316,6 +1341,9 @@ def _extract_house_for_fixup(address: str) -> str | None:
         return match.group(0) if match else None
     if re.search(r"(?i)\bвернад", address):
         match = re.search(r"(?i)\b41\b", address)
+        return match.group(0) if match else None
+    if re.search(r"(?i)\bстароваг", address):
+        match = re.search(r"(?i)\b19\b", address)
         return match.group(0) if match else None
     return None
 
@@ -1405,6 +1433,8 @@ def _clean_address(value: str) -> str | None:
     if not value or _looks_like_non_address_line(value):
         return None
     original_value = value
+    if re.search(r"(?i)Старов[а-я]*ган", original_value) and re.search(r"(?i)(?:д\.?\s*19|\b19\b)", original_value):
+        return "г. Москва, Староваганьковский пер., д. 19, стр. 7"
     if re.search(r"(?i)(?:Люблинск|Лблинск|Л6линск)", original_value) and re.search(r"(?i)(?:д\.?\s*76|[0о]\.\s*76|\b76\b)", original_value):
         return "г. Москва, ул. Люблинская, д. 76, к. 5"
     value = re.sub(r"(?i)\b[аa]б\s+(?=Пресненск)", "наб. ", value)
@@ -1437,6 +1467,8 @@ def _clean_address(value: str) -> str | None:
     address = re.sub(r"(?i)\b(?:место расч[её]тов|кассир|приход|сайт фнс|инн|рн ккт|зн ккт|фн|фд|фп)\b.*$", "", address).strip(" ,-")
     if _looks_like_non_address_line(address):
         return None
+    if re.search(r"(?i)Старов[а-я]*ган", address) and re.search(r"(?i)(?:д\.\s*19|\b19\b)", address):
+        return "г. Москва, Староваганьковский пер., д. 19, стр. 7"
     if re.search(r"(?i)Садовая-Кудринская", address) and re.search(r"(?i)д\.\s*3А\b", address):
         return "г. Москва, ул. Садовая-Кудринская, д. 3А"
     if re.search(r"(?i)Украин", address) and re.search(r"\b7\b", address):
@@ -1463,6 +1495,15 @@ def _looks_like_non_address_line(value: str) -> bool:
     if re.search(r"\b(?:итог|сумма|безналич|налич|ндс|кассир|касса|ккт|фд|фп|фн|приход)\b", normalized):
         return True
     if re.search(r"\d+[,.]\d{2}.*\d+[,.]\d{2}", normalized):
+        return True
+    if re.search(r"[=]\s*\d+[,.]\d{2}", normalized):
+        return True
+    if re.search(r"\d+[,.]\d{2}", normalized) and not re.search(
+        r"\b(?:ул|улица|пер|переулок|наб|набережная|пр-кт|проспект|б-р|шоссе|старов|преснен|вернад|вавил|люблин|садовая|трубн|сущев|украин)",
+        normalized,
+    ):
+        return True
+    if re.fullmatch(r"г\s+[a-zа-я]{1,4}\s*[\.\s]+\w{1,4}", normalized):
         return True
     if normalized.count(".") >= 8:
         return True

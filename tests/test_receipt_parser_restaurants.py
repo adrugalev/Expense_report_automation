@@ -50,7 +50,7 @@ def test_extract_restaurant_name_and_address_from_ip_receipt_text():
     """
 
     assert extract_seller(text) == "Mr Hot Рамен"
-    assert extract_address(text) == "г. Москва, вн.тер.г. муниципальный округ Пресненский, наб Пресненская, д. 10"
+    assert extract_address(text) == "г. Москва, наб. Пресненская, д. 10"
 
 
 def test_extract_vietnamese_kitchen_receipt_with_noisy_ocr_text():
@@ -198,6 +198,25 @@ def test_extract_address_ignores_payment_line_with_g_prefix():
     text = "Г 1030.00 БЕЗНАЛИЧНЫМИ 1030.00 ........................................"
 
     assert extract_address(text) is None
+
+
+def test_extract_rule_taproom_from_noisy_ocr_text():
+    text = """
+    RULE taproom
+    ОБЩЕСТВО С ОГРАНИЧЕННОЙ ОТВЕТСТВЕННОСТЬЮ "БАРЧИК"
+    119019 город федерального значения Москва, муниципальный округ Арбат,
+    пер. Староваганьковский, д. 19, стр. 7
+    Место расчетов Бар RULE фаргоом
+    ИНН 7704310379
+    """
+
+    assert extract_seller(text) == "Бар RULE taproom"
+    assert extract_address(text) == "г. Москва, Староваганьковский пер., д. 19, стр. 7"
+
+
+def test_extract_address_ignores_rule_payment_garbage():
+    assert extract_address("г i 2 =1080.00") is None
+    assert extract_address("г ва . OO") is None
 
 
 def test_extract_amount_and_fiscal_document_from_requisites_ocr_text():
