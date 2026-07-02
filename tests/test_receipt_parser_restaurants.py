@@ -166,6 +166,40 @@ def test_extract_fiscal_document_number_before_fiscal_drive_line():
     assert extract_fiscal_document_number(text) == "24991"
 
 
+def test_extract_mr_hot_ramen_from_noisy_ocr_text():
+    text = """
+    ИТОГ 1030.00
+    БЕЗНАЛИЧНЫМИ 1030.00
+    МЕСТО РАСЧЕТОВ Hr Hot Раней HH
+    ИП ЛИ ЕБО 123112, Г Москва, вн.тер.Г. муниципальный
+    округ Пресненский, наб Пресненская, д. 10
+    ИНН 280129593508
+    """
+
+    assert extract_seller(text) == "Mr Hot Рамен"
+    assert extract_address(text) == "г. Москва, наб. Пресненская, д. 10"
+
+
+def test_extract_osteria_mario_shvili_from_noisy_ocr_text():
+    text = """
+    АКАДЕМ ГОРОДОК
+    ООО Академ Городок
+    77 - г. Москва, вн.тер.г. муниципальный округ Проспект Вернадского,
+    119415, пр-кт Вернадского, д.41
+    Место расчетов Ресторан в парке Osteria Mario & ШВИЛИ
+    ИНН 7720478474
+    """
+
+    assert extract_seller(text) == "Osteria Mario & Швили"
+    assert extract_address(text) == "г. Москва, пр-кт Вернадского, д. 41"
+
+
+def test_extract_address_ignores_payment_line_with_g_prefix():
+    text = "Г 1030.00 БЕЗНАЛИЧНЫМИ 1030.00 ........................................"
+
+    assert extract_address(text) is None
+
+
 def test_extract_amount_and_fiscal_document_from_requisites_ocr_text():
     text = """
     UTOIr _ 1728 -00

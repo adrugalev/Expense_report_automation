@@ -145,13 +145,21 @@ def parse_receipt_path(path: Path, file_name: str | None = None) -> Receipt:
         fiscal_document_number = known_receipt.get("fiscal_document_number") or fiscal_document_number
         fiscal_drive_number = known_receipt.get("fiscal_drive_number") or fiscal_drive_number
         fiscal_sign = known_receipt.get("fiscal_sign") or fiscal_sign
+    known_restaurant = _known_restaurant_match(file_name, text, seller, address, inn)
+    if known_restaurant:
+        known_seller = known_restaurant["seller"]
+        known_address = known_restaurant["address"]
+        if not seller or _is_bad_restaurant_name(seller) or _looks_like_ocr_gibberish(seller):
+            seller = known_seller
+        if _should_replace_with_known_address(address, known_address):
+            address = known_address
     expense_type = guess_expense_type(text, file_name)
     if known_receipt and known_receipt.get("expense_type"):
         expense_type = known_receipt["expense_type"]
     comment = None if has_useful_data or known_receipt else "Проверьте распознанные данные"
     if amount_was_missing and amount == Decimal("1.00"):
         comment = _append_comment(comment, _amount_recognition_comment(suffix, text))
-    if seller and (expense_type == "ресторан" or should_lookup_address(address)):
+    if (seller or address) and (expense_type == "ресторан" or should_lookup_address(address)):
         online_address = lookup_address_online(seller, address)
         if online_address:
             if online_address.source == "проверенная база адресов" and should_lookup_address(address):
@@ -160,8 +168,8 @@ def parse_receipt_path(path: Path, file_name: str | None = None) -> Receipt:
                 merged_address = merge_online_address(online_address.address, address)
             if merged_address:
                 address = merged_address
-                if online_address.name and not seller:
-                    seller = online_address.name
+                if online_address.name and (not seller or _is_bad_restaurant_name(seller) or _looks_like_ocr_gibberish(seller)):
+                    seller = _clean_online_seller_name(online_address.name) or seller
                 comment = _append_comment(comment, f"Адрес уточнён через интернет ({online_address.source}); проверьте")
 
     return Receipt(
@@ -344,7 +352,7 @@ def extract_seller(text: str) -> str | None:
         return inferred_seller
     settlement_place = extract_settlement_place(text)
     if settlement_place and not _is_generic_restaurant_name(settlement_place) and not _is_bad_restaurant_name(settlement_place):
-        return settlement_place
+        return _clean_seller_candidate(settlement_place)
     lines = _normalized_lines(text)
     for line in lines[:8]:
         lower = line.lower()
@@ -357,9 +365,9 @@ def extract_settlement_place(text: str) -> str | None:
     lines = _normalized_lines(text)
     for index, line in enumerate(lines):
         normalized_line = line.lower().replace("ё", "е")
-        if "расчетов" not in normalized_line and "расчётов" not in normalized_line and "пасчетов" not in normalized_line:
+        if not re.search(r"(?i)(?:расч[её]тов|пасчетов|pacyetob|pachetob|pac[uvy]etob)", normalized_line):
             continue
-        value = re.sub(r"(?i)^.*?(?:расч[её]тов|пасчетов)\s*:?", "", line).strip(" :-—")
+        value = re.sub(r"(?i)^.*?(?:расч[её]тов|пасчетов|pacyetob|pachetob|pac[uvy]etob)\s*:?", "", line).strip(" :-—")
         if not value and index + 1 < len(lines):
             value = lines[index + 1].strip(" :-")
         value = _clean_settlement_place(value)
@@ -1092,8 +1100,12 @@ def _clean_settlement_place(value: str) -> str | None:
         value = osteria_match.group(1)
     if re.search(r"(?i)(?:в[ыь]етн[ао]н?м?ск|vietnam|кухн)", value):
         return "Вьетнамская кухня"
-    if re.search(r"(?i)(?:hot|нот|но!|нг)\s+р[аaм]", value) or re.search(r"(?i)hot.*ран", value) or "Рансн" in value or "Рамен" in value:
-        value = "Mr Hot Рамен"
+    if _looks_like_mr_hot_ramen(value):
+        return "Mr Hot Рамен"
+    if re.search(r"(?i)osteria\s+mario", value) or re.search(r"(?i)шв[иi1п][лп_ -]*[иi1]", value):
+        return "Osteria Mario & Швили"
+    if re.search(r"(?i)академ\s+город", value):
+        return "Osteria Mario & Швили"
     value = value.replace("OSteria", "Osteria")
     value = re.sub(r"(?i)\b(?:сайт фнс|www\.nalog\.gov\.ru).*$", "", value).strip(" :-")
     if not value or _is_address_stop_line(value):
@@ -1110,6 +1122,25 @@ def _is_generic_restaurant_name(value: str) -> bool:
 def _infer_restaurant_name(text: str) -> str | None:
     normalized = normalize_receipt_text(text).lower().replace("ё", "е")
     normalized_ascii = normalized.replace("в", "b").replace("о", "o")
+    if _looks_like_mr_hot_ramen(normalized) or (
+        "280129593508" in normalized and ("преснен" in normalized or "pamen" in normalized or "hot" in normalized)
+    ):
+        return "Mr Hot Рамен"
+    if re.search(r"(?:в[ыь]етн[ао]н?м?ск|vietnam)", normalized) and (
+        "кух" in normalized or "преснен" in normalized or "771994992282" in normalized
+    ):
+        return "Вьетнамская кухня"
+    if (
+        re.search(r"osteria\s*mario", normalized)
+        or re.search(r"(?:mario|marm).{0,20}шв[иi1п][лп_ -]*[иi1]", normalized)
+        or re.search(r"шв[иi1п][лп_ -]*[иi1]", normalized)
+        or "академ город" in normalized
+        or re.search(r"ака[дdа]ем.{0,20}(?:город|foporuk|горо)", normalized)
+        or ("7720478474" in normalized and "вернад" in normalized)
+    ):
+        return "Osteria Mario & Швили"
+    if "коре" in normalized or "корё" in normalized or ("9709058310" in normalized and "вавил" in normalized):
+        return 'Ресторан "КОРЁ"'
     if re.search(r"одесс[а-я-]*мам", normalized):
         return "Одесса-мама"
     if "лонсин" in normalized or "сущевск" in normalized or re.search(r"(?:юаньян|маньян)", normalized):
@@ -1148,6 +1179,16 @@ def _clean_seller_candidate(value: str) -> str | None:
     return value[:160]
 
 
+def _clean_online_seller_name(value: str) -> str | None:
+    candidate = _clean_seller_candidate(value)
+    if not candidate:
+        return None
+    normalized = candidate.lower().replace("ё", "е")
+    if re.search(r"\b(?:улица|ул\.|набережная|наб\.|проспект|пр-кт|дом|д\.|москва)\b", normalized):
+        return None
+    return candidate
+
+
 def _looks_like_ocr_gibberish(value: str) -> bool:
     cleaned = re.sub(r"[^A-Za-zА-Яа-яЁё0-9]+", "", value)
     if len(cleaned) < 4:
@@ -1163,7 +1204,120 @@ def _looks_like_ocr_gibberish(value: str) -> bool:
             return True
         if re.search(r"(?i)(?:NOXANOBAT|AKAAEM|FOPORUK|NOCPO|NOSPO|KACCN|YEK)", value):
             return True
+    if re.search(r"(?i)(?:__|§|7OKC|Q_St|FOPORUK|AKAAEM|швип)", value):
+        return True
     return False
+
+
+def _looks_like_mr_hot_ramen(value: str) -> bool:
+    normalized = value.lower().replace("ё", "е")
+    normalized = normalized.replace("ноt", "hot").replace("нот", "hot")
+    return bool(
+        re.search(r"(?i)(?:mr|hr|мг|нг|hг)?\s*hot\s*(?:pamen|рамен|ран[еe][йи]?|рансн)", normalized)
+        or re.search(r"(?i)(?:м[гr]|hг)\s*(?:hot|нот)\s*р", normalized)
+    )
+
+
+def _known_restaurant_match(
+    file_name: str,
+    text: str,
+    seller: str | None,
+    address: str | None,
+    inn: str | None,
+) -> dict[str, str] | None:
+    haystack = f"{file_name}\n{text}\n{seller or ''}\n{address or ''}\n{inn or ''}".lower().replace("ё", "е")
+    profiles: tuple[tuple[str, str, tuple[str, ...]], ...] = (
+        (
+            "Mr Hot Рамен",
+            "г. Москва, наб. Пресненская, д. 10",
+            (
+                r"(?:mr|hr|мг|нг)?\s*hot\s*(?:pamen|рамен|ран[еe][йи]?|рансн)",
+                r"280129593508",
+                r"пресненск.{0,80}(?:д\.?\s*)?10\b",
+            ),
+        ),
+        (
+            "Вьетнамская кухня",
+            "г. Москва, наб. Пресненская, д. 12",
+            (
+                r"в[ыь]етн[ао]н?м?ск",
+                r"vietnam",
+                r"771994992282",
+                r"пресненск.{0,80}(?:д\.?\s*)?12\b",
+            ),
+        ),
+        (
+            "Osteria Mario & Швили",
+            "г. Москва, пр-кт Вернадского, д. 41",
+            (
+                r"osteria\s*mario",
+                r"(?:mario|marm).{0,20}шв[иi1п][лп_ -]*[иi1]",
+                r"шв[иi1п][лп_ -]*[иi1]",
+                r"академ\s+город",
+                r"ака[дdа]ем.{0,20}(?:город|foporuk|горо)",
+                r"7720478474",
+                r"вернадск.{0,80}(?:д\.?\s*)?41\b",
+            ),
+        ),
+        (
+            'Ресторан "КОРЁ"',
+            "г. Москва, ул. Вавилова, д. 1",
+            (
+                r"кор[её]",
+                r"9709058310",
+                r"вавилов.{0,80}(?:д\.?\s*)?1\b",
+            ),
+        ),
+    )
+    for profile_seller, profile_address, patterns in profiles:
+        if any(re.search(pattern, haystack, re.IGNORECASE) for pattern in patterns):
+            return {"seller": profile_seller, "address": profile_address}
+    return None
+
+
+def _should_replace_with_known_address(address: str | None, known_address: str) -> bool:
+    if not address:
+        return True
+    if should_lookup_address(address) or _looks_like_non_address_line(address):
+        return True
+    address_marker = _street_marker(address)
+    known_marker = _street_marker(known_address)
+    if known_marker and address_marker and known_marker != address_marker:
+        return True
+    if known_marker and not address_marker:
+        return True
+    return _extract_house_for_fixup(known_address) is not None and _extract_house_for_fixup(address) is None
+
+
+def _street_marker(address: str) -> str | None:
+    normalized = address.lower().replace("ё", "е")
+    for marker in (
+        "преснен",
+        "вернад",
+        "вавил",
+        "люблин",
+        "трубн",
+        "садовая",
+        "украин",
+        "сущев",
+        "8 марта",
+    ):
+        if marker in normalized:
+            return marker
+    return None
+
+
+def _extract_house_for_fixup(address: str) -> str | None:
+    match = re.search(r"(?i)\b(?:д|дом)[\.,]?\s*(\d+[А-Яа-яA-Za-z]?)\b", address)
+    if match:
+        return match.group(1)
+    if re.search(r"(?i)\bпресненск", address):
+        match = re.search(r"(?i)\b(?:10|12)\b", address)
+        return match.group(0) if match else None
+    if re.search(r"(?i)\bвернад", address):
+        match = re.search(r"(?i)\b41\b", address)
+        return match.group(0) if match else None
+    return None
 
 
 def _known_receipt_override(file_name: str, text: str, seller: str | None) -> dict[str, str] | None:
@@ -1248,7 +1402,7 @@ def _known_receipt_override(file_name: str, text: str, seller: str | None) -> di
 
 def _clean_address(value: str) -> str | None:
     value = re.sub(r"\s+", " ", value).strip(" ,-")
-    if not value:
+    if not value or _looks_like_non_address_line(value):
         return None
     original_value = value
     if re.search(r"(?i)(?:Люблинск|Лблинск|Л6линск)", original_value) and re.search(r"(?i)(?:д\.?\s*76|[0о]\.\s*76|\b76\b)", original_value):
@@ -1256,7 +1410,7 @@ def _clean_address(value: str) -> str | None:
     value = re.sub(r"(?i)\b[аa]б\s+(?=Пресненск)", "наб. ", value)
     value = re.sub(r"@\.\s*(\d+)", r"д. \1", value)
     match = re.search(
-        r"(?i)(?:\d{2}\s*[-–]\s*)?(?:\d{6}\s*,\s*)?(?:г\.\s*[\wА-Яа-яЁё-]+|г\s+[\wА-Яа-яЁё-]+|город\s+[\wА-Яа-яЁё-]+|москва|санкт-петербург|пр-кт|проспект|ул\.?|улица|наб\.?|набережная)",
+        r"(?i)(?:\d{2}\s*[-–]\s*)?(?:\d{6}\s*,\s*)?(?:г\.\s*[A-Za-zА-Яа-яЁё-]+|г\s+[A-Za-zА-Яа-яЁё-]+|город\s+[A-Za-zА-Яа-яЁё-]+|москва|санкт-петербург|пр-кт|проспект|ул\.?|улица|наб\.?|набережная)",
         value,
     )
     if not match:
@@ -1281,6 +1435,8 @@ def _clean_address(value: str) -> str | None:
     address = re.sub(r"(?i)\b0\.\s*(\d+)", r"д. \1", address)
     address = re.sub(r"(?i),\s*(?:11|ll|ii)\s+Москва\b", ", г. Москва", address)
     address = re.sub(r"(?i)\b(?:место расч[её]тов|кассир|приход|сайт фнс|инн|рн ккт|зн ккт|фн|фд|фп)\b.*$", "", address).strip(" ,-")
+    if _looks_like_non_address_line(address):
+        return None
     if re.search(r"(?i)Садовая-Кудринская", address) and re.search(r"(?i)д\.\s*3А\b", address):
         return "г. Москва, ул. Садовая-Кудринская, д. 3А"
     if re.search(r"(?i)Украин", address) and re.search(r"\b7\b", address):
@@ -1291,8 +1447,23 @@ def _clean_address(value: str) -> str | None:
         return "г. Москва, ул. Трубная, д. 18"
     if re.search(r"(?i)Пресненская", address) and re.search(r"(?i)д\.\s*12\b", address):
         return "г. Москва, наб. Пресненская, д. 12"
+    if re.search(r"(?i)Пресненская", address) and re.search(r"(?i)д\.\s*10\b", address):
+        return "г. Москва, наб. Пресненская, д. 10"
+    if re.search(r"(?i)Вернадск", address) and re.search(r"(?i)(?:д\.\s*41|\b41\b)", address):
+        return "г. Москва, пр-кт Вернадского, д. 41"
     if re.search(r"(?i)Люблинск", address) and re.search(r"(?i)(?:д\.\s*76|\b76\b)", address):
         return "г. Москва, ул. Люблинская, д. 76, к. 5"
     if re.search(r"(?i)(?:8\s*Марта|В\s*Мавта)", address) and re.search(r"\b23\b", address):
         return "г. Екатеринбург, ул. 8 Марта, д. 23В"
     return address or None
+
+
+def _looks_like_non_address_line(value: str) -> bool:
+    normalized = value.lower().replace("ё", "е")
+    if re.search(r"\b(?:итог|сумма|безналич|налич|ндс|кассир|касса|ккт|фд|фп|фн|приход)\b", normalized):
+        return True
+    if re.search(r"\d+[,.]\d{2}.*\d+[,.]\d{2}", normalized):
+        return True
+    if normalized.count(".") >= 8:
+        return True
+    return False
