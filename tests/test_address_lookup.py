@@ -65,6 +65,19 @@ def test_lookup_address_online_returns_known_restaurant_name_and_address(monkeyp
     assert result.address == "г. Екатеринбург, ул. Посадская, д. 28А"
 
 
+def test_lookup_address_online_returns_known_gift_store_name_and_address(monkeypatch):
+    def fail_urlopen(request, timeout):
+        raise AssertionError("Known store address should not call online fallback")
+
+    monkeypatch.setattr("src.address_lookup.urlopen", fail_urlopen)
+
+    result = lookup_address_online("М&Е \"Ароматный", "109382, , МОСкба, _ Люблинская ул. , 0.76) K.5")
+
+    assert result
+    assert result.name == "Ароматный мир"
+    assert result.address == "г. Москва, ул. Люблинская, д. 76, к. 5"
+
+
 def test_should_verify_restaurant_fields_for_ocr_name_and_address():
     assert should_verify_restaurant_fields("Ресторан “Звевобой“", "г. Екатевинбуюг. ул. Посадская. сто. 2 ВА")
     assert not should_verify_restaurant_fields("Остерия Марио", "г. Москва, проспект Вернадского, 119415")

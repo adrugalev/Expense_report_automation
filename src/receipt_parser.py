@@ -157,24 +157,7 @@ def parse_receipt_path(path: Path, file_name: str | None = None) -> Receipt:
     comment = None if has_useful_data or known_receipt else "Проверьте распознанные данные"
     if amount_was_missing and amount == Decimal("1.00"):
         comment = _append_comment(comment, _amount_recognition_comment(suffix, text))
-    needs_restaurant_verification = expense_type == "ресторан" and should_verify_restaurant_fields(seller, address)
-    if (seller or address) and (needs_restaurant_verification or should_lookup_address(address)):
-        online_address = lookup_address_online(seller, address)
-        if online_address:
-            if online_address.source == "проверенная база адресов" and needs_restaurant_verification:
-                merged_address = online_address.address
-            else:
-                merged_address = merge_online_address(online_address.address, address)
-            if merged_address:
-                address = merged_address
-                if online_address.name and (
-                    needs_restaurant_verification
-                    or not seller
-                    or _is_bad_restaurant_name(seller)
-                    or _looks_like_ocr_gibberish(seller)
-                ):
-                    seller = _clean_online_seller_name(online_address.name) or seller
-                comment = _append_comment(comment, f"Адрес уточнён через интернет ({online_address.source}); проверьте")
+    seller, address, comment = _verify_receipt_identity(seller, address, expense_type, comment)
 
     return Receipt(
         file_name=file_name,
@@ -207,6 +190,93 @@ def parse_qr_payload(qr_raw: str) -> ParsedQr:
         fiscal_drive_number=values.get("fn"),
         fiscal_document_number=values.get("i"),
         fiscal_sign=values.get("fp"),
+    )
+
+
+def _verify_receipt_identity(
+    seller: str | None,
+    address: str | None,
+    expense_type: str,
+    comment: str | None,
+) -> tuple[str | None, str | None, str | None]:
+    if not _should_run_identity_lookup(seller, address, expense_type):
+        if _needs_manual_identity_review(seller, address, expense_type):
+            comment = _append_comment(comment, "Проверьте название продавца и адрес")
+        return seller, address, comment
+
+    online_address = lookup_address_online(seller, address)
+    if not online_address:
+        if _needs_manual_identity_review(seller, address, expense_type):
+            comment = _append_comment(comment, "Не удалось уточнить продавца и адрес автоматически; проверьте")
+        return seller, address, comment
+
+    merged_address = _merge_verified_address(online_address.address, address, expense_type, online_address.source)
+    if not merged_address:
+        comment = _append_comment(comment, "Найден адрес с другим домом; проверьте продавца и адрес")
+        return seller, address, comment
+
+    address = merged_address
+    if online_address.name and _should_replace_seller_name(seller, expense_type, online_address.source):
+        seller = _clean_online_seller_name(online_address.name) or seller
+    comment = _append_comment(comment, f"Продавец/адрес уточнены ({online_address.source}); проверьте")
+    return seller, address, comment
+
+
+def _should_run_identity_lookup(seller: str | None, address: str | None, expense_type: str) -> bool:
+    if not seller and not address:
+        return False
+    if expense_type == "такси":
+        return False
+    if expense_type == "ресторан":
+        return should_verify_restaurant_fields(seller, address)
+    if expense_type == "подарки":
+        return _is_suspicious_seller_name(seller) or should_lookup_address(address)
+    return _is_suspicious_seller_name(seller) or should_lookup_address(address)
+
+
+def _needs_manual_identity_review(seller: str | None, address: str | None, expense_type: str) -> bool:
+    if not seller and not address:
+        return False
+    if expense_type == "такси":
+        return _is_suspicious_seller_name(seller)
+    return _is_suspicious_seller_name(seller) or should_lookup_address(address)
+
+
+def _merge_verified_address(
+    verified_address: str,
+    original_address: str | None,
+    expense_type: str,
+    source: str,
+) -> str | None:
+    if source == "проверенная база адресов":
+        return verified_address
+    if expense_type in {"ресторан", "подарки"} and should_lookup_address(original_address):
+        return verified_address
+    return merge_online_address(verified_address, original_address)
+
+
+def _should_replace_seller_name(seller: str | None, expense_type: str, source: str) -> bool:
+    if source == "проверенная база адресов":
+        return True
+    if expense_type == "такси":
+        return False
+    return not seller or _is_suspicious_seller_name(seller)
+
+
+def _is_suspicious_seller_name(value: str | None) -> bool:
+    if not value:
+        return True
+    normalized = value.lower().replace("ё", "е")
+    compact = re.sub(r"[^a-zа-я0-9]+", "", normalized)
+    if len(compact) < 4:
+        return True
+    if _is_bad_restaurant_name(value) or _looks_like_ocr_gibberish(value):
+        return True
+    return bool(
+        re.search(
+            r"(?i)(?:расч[её]тов|пасчетов|место|ккт|фн|фд|фп|рга\s*й|нвстц|кассир|чек)",
+            normalized,
+        )
     )
 
 
@@ -539,7 +609,23 @@ def guess_expense_type(text: str, file_name: str) -> str:
     if any(word in haystack for word in ("такси", "taxi", "яндекс go", "yandex", "перевозка пассажиров")):
         return "такси"
     if extract_settlement_place(text) or _infer_restaurant_name(text) or any(
-        word in haystack for word in ("ресторан", "кафе", "coffee", "restaurant", "ramen", "bbq", "smoke", "snoke", "brisket", "брискет")
+        word in haystack
+        for word in (
+            "ресторан",
+            "кафе",
+            "coffee",
+            "restaurant",
+            "ramen",
+            "bbq",
+            "smoke",
+            "snoke",
+            "brisket",
+            "брискет",
+            "раковар",
+            "клешн",
+            "кнеш",
+            "хвост",
+        )
     ):
         return "ресторан"
     if any(word in haystack for word in ("подар", "podar", "gift", "сувенир", "souvenir")):
@@ -1144,6 +1230,12 @@ def _infer_restaurant_name(text: str) -> str | None:
     normalized_ascii = normalized.replace("в", "b").replace("о", "o")
     if re.search(r"(?i)frank\s+(?:by|ty)\s+bast[ay]", normalized):
         return "Frank by Баста"
+    if (
+        re.search(r"(?i)(?:клешн|кнеш|киешн).{0,30}(?:хвост|хво)", normalized)
+        or "раковар" in normalized
+        or "109451" in normalized and re.search(r"(?i)(?:васч[её]тоб|расч[её]тов)", normalized)
+    ):
+        return "Раковарня «Клешни и Хвосты»"
     if _looks_like_rule_taproom(normalized) or "7704310379" in normalized or "староваг" in normalized or "барчик" in normalized:
         return "Бар RULE taproom"
     if _looks_like_mr_hot_ramen(normalized) or (
@@ -1340,6 +1432,16 @@ def _known_restaurant_match(
                 r"с[вр]етенк.{0,80}(?:24/2|24\s*/\s*2)",
             ),
         ),
+        (
+            "Раковарня «Клешни и Хвосты»",
+            "г. Москва, ул. Братиславская, д. 12",
+            (
+                r"(?:клешн|кнеш|киешн).{0,40}(?:хвост|хво)",
+                r"раковар",
+                r"109451",
+                r"братислав",
+            ),
+        ),
     )
     for profile_seller, profile_address, patterns in profiles:
         if any(re.search(pattern, haystack, re.IGNORECASE) for pattern in patterns):
@@ -1372,6 +1474,7 @@ def _street_marker(address: str) -> str | None:
         "посад",
         "сретен",
         "светен",
+        "братислав",
         "люблин",
         "трубн",
         "садовая",
@@ -1479,6 +1582,7 @@ def _known_receipt_override(file_name: str, text: str, seller: str | None) -> di
             "seller": "Ароматный мир",
             "address": "г. Москва, ул. Люблинская, д. 76, к. 5",
             "amount": "1259.98",
+            "expense_type": "подарки",
             "fiscal_document_number": "77751",
             "fiscal_drive_number": "7384440901089947",
         }
@@ -1492,6 +1596,11 @@ def _clean_address(value: str) -> str | None:
     original_value = value
     if re.search(r"(?i)(?:Сретен|Светен)", original_value) and re.search(r"(?i)(?:24\s*/\s*2|24/2)", original_value):
         return "г. Москва, ул. Сретенка, д. 24/2 стр. 1"
+    if (
+        re.search(r"(?i)(?:Братислав|[ПГ]анскай|109451)", original_value)
+        and re.search(r"(?i)(?:д\.?\s*12|@\s*,?\s*12|\b12\b)", original_value)
+    ):
+        return "г. Москва, ул. Братиславская, д. 12"
     if _looks_like_non_address_line(value):
         return None
     if re.search(r"(?i)Старов[а-я]*ган", original_value) and re.search(r"(?i)(?:д\.?\s*19|\b19\b)", original_value):
@@ -1544,6 +1653,11 @@ def _clean_address(value: str) -> str | None:
         return "г. Москва, ул. Трубная, д. 18"
     if re.search(r"(?i)(?:Сретен|Светен)", address) and re.search(r"(?i)(?:24\s*/\s*2|24/2)", address):
         return "г. Москва, ул. Сретенка, д. 24/2 стр. 1"
+    if (
+        re.search(r"(?i)(?:Братислав|[ПГ]анскай|109451)", address)
+        and re.search(r"(?i)(?:д\.\s*12|@\s*,?\s*12|\b12\b)", address)
+    ):
+        return "г. Москва, ул. Братиславская, д. 12"
     if re.search(r"(?i)Флотск", address) and re.search(r"(?i)(?:д\.\s*3|\b3\b)", address):
         return "г. Москва, Флотская ул., д. 3"
     if re.search(r"(?i)Пресненская", address) and re.search(r"(?i)д\.\s*12\b", address):

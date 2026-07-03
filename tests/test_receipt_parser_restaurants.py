@@ -138,6 +138,23 @@ def test_extract_frank_by_basta_receipt_with_noisy_name_and_address():
     assert guess_expense_type(text, "scan_check_frank.pdf") == "ресторан"
 
 
+def test_extract_kleshni_hvosti_receipt_with_noisy_name_and_address():
+    text = """
+    %’9‘451. Носква, Вн. лер Г. мУНИЦИЛальный OKIYT НолоинО, М! b g
+    панскай, 1, 12, понемение IX, конната 110
+    Несто васчётоб Раковарня “KILWIM W XB0L 1y
+    АКОВАРНЯ “КНешИИ W ХЫОСты“
+    итог =18690.00
+    @1 15669
+    73844406001 29627
+    """
+
+    assert extract_seller(text) == "Раковарня «Клешни и Хвосты»"
+    assert extract_address(text) == "г. Москва, ул. Братиславская, д. 12"
+    assert extract_amount(text) == Decimal("18690.00")
+    assert guess_expense_type(text, "check_cafe_281125.pdf") == "ресторан"
+
+
 def test_extract_korchma_receipt_with_noisy_ocr_text():
     text = """
     Кассовый чек
@@ -421,6 +438,22 @@ def test_parse_frank_by_basta_receipt_pdf():
     assert receipt.date == date(2025, 7, 11)
     assert receipt.amount == Decimal("16180.00")
     assert receipt.fiscal_document_number == "18708"
+
+
+@pytest.mark.skipif(
+    not (LOCAL_SCAN_DIR / "check_cafe_281125.pdf").exists(),
+    reason="local Kleshni i Hvosti restaurant receipt fixture is unavailable",
+)
+def test_parse_kleshni_hvosti_receipt_pdf():
+    from src.receipt_parser import parse_receipt_path
+
+    receipt = parse_receipt_path(LOCAL_SCAN_DIR / "check_cafe_281125.pdf")
+
+    assert receipt.seller == "Раковарня «Клешни и Хвосты»"
+    assert receipt.address == "г. Москва, ул. Братиславская, д. 12"
+    assert receipt.amount == Decimal("18690.00")
+    assert receipt.expense_type == "ресторан"
+    assert receipt.fiscal_document_number == "15669"
 
 
 @pytest.mark.skipif(
