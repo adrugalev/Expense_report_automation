@@ -699,7 +699,7 @@ def _receipt_editor(receipt_files, report_type: str) -> list[Receipt]:
         frame,
         num_rows="dynamic",
         use_container_width=True,
-        key=f"receipt_editor_{report_type}_{st.session_state.get('_receipt_upload_reset', 0)}",
+        key=_receipt_editor_key(report_type, parsed),
     )
     receipts: list[Receipt] = []
     for row in edited.to_dict("records"):
@@ -710,6 +710,20 @@ def _receipt_editor(receipt_files, report_type: str) -> list[Receipt]:
             receipt.expense_type = "ресторан"
         receipts.append(receipt)
     return receipts
+
+
+def _receipt_editor_key(report_type: str, receipts: list[Receipt]) -> str:
+    signature = "|".join(
+        (
+            f"{receipt.file_name}:{receipt.date or ''}:{receipt.seller or ''}:{receipt.address or ''}:"
+            f"{receipt.amount}:{receipt.expense_type}:{receipt.fiscal_document_number or ''}:"
+            f"{receipt.fiscal_drive_number or ''}:{receipt.fiscal_sign or ''}"
+        )
+        for receipt in receipts
+    )
+    digest = hashlib.sha1(signature.encode("utf-8")).hexdigest()[:12]
+    reset = st.session_state.get("_receipt_upload_reset", 0)
+    return f"receipt_editor_{report_type}_{reset}_{APP_VERSION_REVISION}_{digest}"
 
 
 def _ensure_ocr_runtime_for_uploads(receipt_files) -> None:
@@ -970,6 +984,15 @@ def _apply_representative_event_date_default(receipts: list[Receipt]) -> None:
         st.session_state["representative_event_date"] = _representative_event_date_default(receipts)
 
 
+def _apply_gift_purchase_date_default(receipts: list[Receipt]) -> None:
+    signature = "|".join(f"{receipt.file_name}:{receipt.date or ''}" for receipt in receipts)
+    if signature == st.session_state.get("_gift_purchase_date_signature"):
+        return
+    st.session_state["_gift_purchase_date_signature"] = signature
+    if any(receipt.date for receipt in receipts):
+        st.session_state["gift_purchase_date"] = _representative_event_date_default(receipts)
+
+
 def _representative_autofill_profile(data: dict) -> dict:
     signature = _representative_autofill_signature(data)
     assignments = st.session_state.setdefault("_representative_autofill_assignments", {})
@@ -1190,6 +1213,7 @@ def _inject_report_form_css() -> None:
 
 def _gift_form(employee, common_kwargs, excel_values: list[str]):
     receipts = common_kwargs["receipts"]
+    _apply_gift_purchase_date_default(receipts)
     default_purchase_date = _representative_event_date_default(receipts)
     default_total = sum((receipt.amount for receipt in receipts), Decimal("0"))
     default_amount = default_total if default_total > 0 else Decimal("1.00")
@@ -1200,7 +1224,7 @@ def _gift_form(employee, common_kwargs, excel_values: list[str]):
     left, _right = st.columns(2, gap="large")
     with left:
         report_date = st.date_input("Дата составления документов", value=date.today(), width=320)
-        purchase_date = st.date_input("Дата покупки", value=default_purchase_date, width=320)
+        purchase_date = st.date_input("Дата покупки", value=default_purchase_date, width=320, key="gift_purchase_date")
     purpose = st.text_area("Цель расходов", value=default_purpose, height=120, width=640)
     return {
         "initiator": employee,

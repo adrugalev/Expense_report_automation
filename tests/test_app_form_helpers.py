@@ -8,6 +8,7 @@ import streamlit as st
 
 from app import (
     REPRESENTATIVE_AUTOFILL_PROFILES,
+    _apply_gift_purchase_date_default,
     _autofill_representative_missing_fields,
     _build_representative_per_receipt_different_companies,
     _sync_report_type_state,
@@ -15,6 +16,7 @@ from app import (
     _documents_zip_bytes,
     _humanize_form_error,
     _receipt_date_bounds,
+    _receipt_editor_key,
     _representative_event_date_default,
     _representative_single_receipt_report,
 )
@@ -74,6 +76,26 @@ def test_representative_event_date_default_uses_first_receipt_date():
     ]
 
     assert _representative_event_date_default(receipts) == date(2026, 4, 9)
+
+
+def test_gift_purchase_date_default_updates_from_receipts():
+    st.session_state.clear()
+    receipts = [Receipt(file_name="gift.pdf", date=date(2024, 7, 8), amount=Decimal("3540"), expense_type="подарки")]
+
+    _apply_gift_purchase_date_default(receipts)
+
+    assert st.session_state["gift_purchase_date"] == date(2024, 7, 8)
+
+
+def test_receipt_editor_key_changes_when_fiscal_document_is_recognized():
+    st.session_state.clear()
+    receipt_without_fd = Receipt(file_name="gift.pdf", date=date(2024, 7, 8), amount=Decimal("3540"), expense_type="подарки")
+    receipt_with_fd = receipt_without_fd.model_copy(update={"fiscal_document_number": "337"})
+
+    first_key = _receipt_editor_key("gifts", [receipt_without_fd])
+    second_key = _receipt_editor_key("gifts", [receipt_with_fd])
+
+    assert first_key != second_key
 
 
 def test_representative_single_receipt_report_uses_receipt_cafe_address_and_date():

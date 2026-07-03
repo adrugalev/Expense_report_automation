@@ -5,6 +5,7 @@ from pathlib import Path
 from docx import Document
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.oxml.ns import qn
+from docx.shared import Pt
 
 from src.docx_generator import extract_docx_text
 from src.models import BusinessTripReport, Employee, GiftExpenseReport, Receipt, RepresentativeExpenseReport
@@ -419,14 +420,22 @@ def test_gift_expense_builder_generates_single_memo_like_example(tmp_path):
     text = "\n".join(paragraph.text for paragraph in generated.paragraphs)
 
     assert len(result.files) == 1
+    assert result.files[0].name == "Служебная_записка_подарки_Другалев_19062026.docx"
     assert generated.paragraphs[4].text == "Хуан Голяну"
     title = next(paragraph for paragraph in generated.paragraphs if paragraph.text == "Служебная записка о компенсации расходов")
     request = next(paragraph for paragraph in generated.paragraphs if paragraph.text.startswith("Прошу компенсировать"))
     attachment = next(paragraph for paragraph in generated.paragraphs if paragraph.text == "Кассовый чек №18724 от 18.06.2026")
+    attachment_index = next(
+        index for index, paragraph in enumerate(generated.paragraphs) if paragraph.text == "Кассовый чек №18724 от 18.06.2026"
+    )
     signature_table = generated.tables[0]
     assert title.runs[0].bold is True
     assert request.alignment == WD_ALIGN_PARAGRAPH.JUSTIFY
     assert attachment.style.name == "List Number"
+    assert generated.paragraphs[attachment_index - 1].text == "Приложения:"
+    assert generated.paragraphs[attachment_index - 1].paragraph_format.space_after == Pt(0)
+    assert attachment.paragraph_format.space_before == Pt(0)
+    assert attachment.paragraph_format.space_after == Pt(0)
     assert signature_table.cell(0, 0).text == "Инициатор"
     assert signature_table.cell(1, 0).text == "Руководитель направления продаж"
     assert len(signature_table.rows) == 2
@@ -476,6 +485,7 @@ def test_gift_expense_builder_adds_approval_for_non_drugalev(tmp_path):
     generated = Document(result.files[0])
     signature_table = generated.tables[0]
 
+    assert result.files[0].name == "Служебная_записка_подарки_Баранова_19062026.docx"
     assert len(signature_table.rows) == 5
     assert signature_table.cell(0, 0).text == "Инициатор"
     assert signature_table.cell(3, 0).text == "Согласовано"

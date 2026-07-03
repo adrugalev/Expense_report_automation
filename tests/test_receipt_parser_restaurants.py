@@ -457,6 +457,24 @@ def test_parse_kleshni_hvosti_receipt_pdf():
 
 
 @pytest.mark.skipif(
+    not (LOCAL_SCAN_DIR / "мёд_080724.pdf").exists(),
+    reason="local Altai Premium gift receipt fixture is unavailable",
+)
+def test_parse_altai_premium_gift_receipt_pdf():
+    from src.receipt_parser import parse_receipt_path
+
+    receipt = parse_receipt_path(LOCAL_SCAN_DIR / "мёд_080724.pdf")
+
+    assert receipt.seller == "Алтай Премиум"
+    assert receipt.address == "г. Москва, ул. Намёткина, д. 14, к. 1"
+    assert receipt.inn == "7727344960"
+    assert receipt.date == date(2024, 7, 8)
+    assert receipt.amount == Decimal("3540.00")
+    assert receipt.expense_type == "подарки"
+    assert receipt.fiscal_document_number == "337"
+
+
+@pytest.mark.skipif(
     not any(path.exists() for path in ANTTEQ_GIFT_RECEIPT_PATHS),
     reason="local Antteq gift receipt fixture is unavailable",
 )

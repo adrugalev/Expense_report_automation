@@ -159,9 +159,9 @@ class GiftExpenseBuilder(BaseReportBuilder):
         }
 
     def build_file_name(self, report: GiftExpenseReport, template_path: Path) -> str:
-        counterparty = slugify_file_part(report.counterparty, "Контрагент")
         prefix = slugify_file_part(template_path.stem)
-        return f"{prefix}_{counterparty}_{report.report_date.strftime('%d%m%Y')}.docx"
+        initiator_last_name = slugify_file_part(report.initiator.full_name.split()[0], "Инициатор")
+        return f"{prefix}_{initiator_last_name}_{report.report_date.strftime('%d%m%Y')}.docx"
 
 
 def _build_gift_expense_memo(report: GiftExpenseReport) -> Document:
@@ -203,8 +203,7 @@ def _build_gift_expense_memo(report: GiftExpenseReport) -> Document:
 
     document.add_paragraph()
     document.add_paragraph()
-    document.add_paragraph("Приложения:")
-    document.add_paragraph()
+    _add_representative_paragraph(document, "Приложения:")
     attachments_numbering_id = _new_representative_numbering_id(document)
     for index, receipt in enumerate(report.receipts, start=1):
         _add_representative_numbered_paragraph(document, _gift_receipt_application(receipt, index), attachments_numbering_id)
@@ -371,6 +370,9 @@ def _add_representative_numbered_paragraph(document: Document, text: str, number
     paragraph = _add_representative_paragraph(document, _capitalize_first_letter(text))
     paragraph.style = "List Number"
     _set_paragraph_numbering(paragraph, numbering_id)
+    paragraph.paragraph_format.space_before = Pt(0)
+    paragraph.paragraph_format.space_after = Pt(0)
+    paragraph.paragraph_format.line_spacing = 1
     paragraph.paragraph_format.left_indent = Cm(1.0)
     paragraph.paragraph_format.first_line_indent = Cm(-0.4)
     paragraph.paragraph_format.tab_stops.add_tab_stop(Cm(1.0))
