@@ -77,6 +77,24 @@ def test_extract_vietnamese_kitchen_receipt_with_noisy_ocr_text():
     assert guess_expense_type(text, "check3_2880.pdf") == "ресторан"
 
 
+def test_extract_vasilchuki_receipt_with_noisy_total_and_address():
+    text = """
+    ИТОГ 14407 „00
+    МЕЗНАЛИЧНЫМИ | meeescme e сч 14101300
+    РН ККУ: 000161 3516008453 19.06.24 17:2:
+    000 ”ОдЗИС” ‚
+    /7 - ’,Косква, 12549%, Флотская ул, д, 3
+    МЕСТО РАСЧЕТОВ Ресторан Vasilchuki
+    (НО: 0Ы зн Фді@?415 O 24060204
+    """
+
+    assert extract_seller(text) == "Ресторан Vasilchuki"
+    assert extract_address(text) == "г. Москва, Флотская ул., д. 3"
+    assert extract_amount(text) == Decimal("14407.00")
+    assert extract_date(text) == date(2024, 6, 19)
+    assert guess_expense_type(text, "Drugalev_check_19062024.pdf") == "ресторан"
+
+
 def test_extract_korchma_receipt_with_noisy_ocr_text():
     text = """
     Кассовый чек

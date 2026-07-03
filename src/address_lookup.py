@@ -34,6 +34,9 @@ KNOWN_RESTAURANT_ADDRESSES = {
     "ruleфаргоом": "г. Москва, Староваганьковский пер., д. 19, стр. 7",
     "ruleсангоом": "г. Москва, Староваганьковский пер., д. 19, стр. 7",
     "барчик": "г. Москва, Староваганьковский пер., д. 19, стр. 7",
+    "vasilchuki": "г. Москва, Флотская ул., д. 3",
+    "ресторанvasilchuki": "г. Москва, Флотская ул., д. 3",
+    "васильчуки": "г. Москва, Флотская ул., д. 3",
 }
 
 
@@ -210,6 +213,8 @@ def _address_query_hint(value: str) -> str:
         return "Москва Пресненская набережная 10"
     if "rule" in lower or "taproom" in lower or "барчик" in lower or "староваг" in lower:
         return "Москва Староваганьковский переулок 19"
+    if "vasilchuki" in lower or "васильч" in lower or "флот" in lower:
+        return "Москва Флотская улица 3"
     city = "Москва" if re.search(r"(?i)(?:москва|hock|hoc)", value) else ""
     street_match = re.search(r"(?i)(?:ул\.?|улица|наб\.?|набережная|пр-кт|проспект)\s+[\wА-Яа-яЁё-]+", value)
     street = street_match.group(0) if street_match else ""

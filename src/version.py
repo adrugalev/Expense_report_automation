@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-APP_VERSION_DATE = "02.07.2026"
-APP_VERSION_REVISION = 2
+APP_VERSION_DATE = "03.07.2026"
+APP_VERSION_REVISION = 1
 
 
 def app_version_label() -> str:
