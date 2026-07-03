@@ -40,6 +40,10 @@ KNOWN_RESTAURANT_ADDRESSES = {
     "зверобой": "г. Екатеринбург, ул. Посадская, д. 28А",
     "звевобой": "г. Екатеринбург, ул. Посадская, д. 28А",
     "ресторанзверобой": "г. Екатеринбург, ул. Посадская, д. 28А",
+    "frankbybasta": "г. Москва, ул. Сретенка, д. 24/2 стр. 1",
+    "franktybasty": "г. Москва, ул. Сретенка, д. 24/2 стр. 1",
+    "франкбайбаста": "г. Москва, ул. Сретенка, д. 24/2 стр. 1",
+    "frank": "г. Москва, ул. Сретенка, д. 24/2 стр. 1",
 }
 KNOWN_RESTAURANT_NAMES = {
     "коре": 'Ресторан "КОРЁ"',
@@ -72,6 +76,10 @@ KNOWN_RESTAURANT_NAMES = {
     "зверобой": "Ресторан «Зверобой»",
     "звевобой": "Ресторан «Зверобой»",
     "ресторанзверобой": "Ресторан «Зверобой»",
+    "frankbybasta": "Frank by Баста",
+    "franktybasty": "Frank by Баста",
+    "франкбайбаста": "Frank by Баста",
+    "frank": "Frank by Баста",
 }
 
 
@@ -110,6 +118,8 @@ def should_lookup_address(address: str | None) -> bool:
         "екатев",
         "буюг",
         "сто.",
+        "чек ы",
+        "косл овый",
     )
     if any(marker in normalized for marker in garbage_markers):
         return True
@@ -280,6 +290,8 @@ def _address_query_hint(value: str) -> str:
         return "Москва Флотская улица 3"
     if "звер" in lower or "звев" in lower or "посад" in lower:
         return "Екатеринбург Посадская улица 28А"
+    if "frank" in lower or "basta" in lower or "basty" in lower or "светен" in lower or "сретен" in lower:
+        return "Москва улица Сретенка 24/2"
     city = _city_query_hint(value)
     street_match = re.search(r"(?i)(?:ул\.?|улица|наб\.?|набережная|пр-кт|проспект)\s+[\wА-Яа-яЁё-]+", value)
     street = street_match.group(0) if street_match else ""
@@ -305,7 +317,7 @@ def _looks_suspicious_restaurant_name(value: str | None) -> bool:
         return True
     return bool(
         re.search(
-            r"(?i)(?:расч[её]тов|пасчетов|зве[вй]об|нвстц|р[её]счетц|зн\s*ккт|рн\s*ккт|фн|фд|фп)",
+            r"(?i)(?:расч[её]тов|пасчетов|зве[вй]об|нвстц|р[её]счетц|зн\s*ккт|рн\s*ккт|фн|фд|фп|рга\s*й)",
             normalized,
         )
     )
@@ -315,6 +327,8 @@ def _street_key(address: str) -> str:
     normalized = address.lower().replace("ё", "е")
     for key in (
         "посад",
+        "сретен",
+        "светен",
         "флот",
         "преснен",
         "вернад",

@@ -352,11 +352,13 @@ def extract_supplier_inn(text: str) -> str | None:
 
 def extract_seller(text: str) -> str | None:
     inferred_seller = _infer_seller_name(text)
-    if inferred_seller:
+    if inferred_seller and (_known_restaurant_match("", text, inferred_seller, None, None) or inferred_seller in {"Азбука вкуса", "Ароматный мир"}):
         return inferred_seller
     settlement_place = extract_settlement_place(text)
     if settlement_place and not _is_generic_restaurant_name(settlement_place) and not _is_bad_restaurant_name(settlement_place):
         return _clean_seller_candidate(settlement_place)
+    if inferred_seller:
+        return inferred_seller
     lines = _normalized_lines(text)
     for line in lines[:8]:
         lower = line.lower()
@@ -382,6 +384,9 @@ def extract_settlement_place(text: str) -> str | None:
 
 def extract_address(text: str) -> str | None:
     lines = _normalized_lines(text)
+    known_address = _clean_address(" ".join(lines))
+    if known_address:
+        return known_address[:220]
     for index, line in enumerate(lines):
         if not _looks_like_legal_entity(line):
             continue
@@ -1137,6 +1142,8 @@ def _is_generic_restaurant_name(value: str) -> bool:
 def _infer_restaurant_name(text: str) -> str | None:
     normalized = normalize_receipt_text(text).lower().replace("ё", "е")
     normalized_ascii = normalized.replace("в", "b").replace("о", "o")
+    if re.search(r"(?i)frank\s+(?:by|ty)\s+bast[ay]", normalized):
+        return "Frank by Баста"
     if _looks_like_rule_taproom(normalized) or "7704310379" in normalized or "староваг" in normalized or "барчик" in normalized:
         return "Бар RULE taproom"
     if _looks_like_mr_hot_ramen(normalized) or (
@@ -1324,6 +1331,15 @@ def _known_restaurant_match(
                 r"посадск.{0,80}(?:28\s*[аa]|2\s*в[аa])\b",
             ),
         ),
+        (
+            "Frank by Баста",
+            "г. Москва, ул. Сретенка, д. 24/2 стр. 1",
+            (
+                r"frank\s+(?:by|ty)\s+bast[ay]",
+                r"7840107545",
+                r"с[вр]етенк.{0,80}(?:24/2|24\s*/\s*2)",
+            ),
+        ),
     )
     for profile_seller, profile_address, patterns in profiles:
         if any(re.search(pattern, haystack, re.IGNORECASE) for pattern in patterns):
@@ -1354,6 +1370,8 @@ def _street_marker(address: str) -> str | None:
         "вавил",
         "флот",
         "посад",
+        "сретен",
+        "светен",
         "люблин",
         "трубн",
         "садовая",
@@ -1469,13 +1487,19 @@ def _known_receipt_override(file_name: str, text: str, seller: str | None) -> di
 
 def _clean_address(value: str) -> str | None:
     value = re.sub(r"\s+", " ", value).strip(" ,-")
-    if not value or _looks_like_non_address_line(value):
+    if not value:
         return None
     original_value = value
+    if re.search(r"(?i)(?:Сретен|Светен)", original_value) and re.search(r"(?i)(?:24\s*/\s*2|24/2)", original_value):
+        return "г. Москва, ул. Сретенка, д. 24/2 стр. 1"
+    if _looks_like_non_address_line(value):
+        return None
     if re.search(r"(?i)Старов[а-я]*ган", original_value) and re.search(r"(?i)(?:д\.?\s*19|\b19\b)", original_value):
         return "г. Москва, Староваганьковский пер., д. 19, стр. 7"
     if re.search(r"(?i)(?:Люблинск|Лблинск|Л6линск)", original_value) and re.search(r"(?i)(?:д\.?\s*76|[0о]\.\s*76|\b76\b)", original_value):
         return "г. Москва, ул. Люблинская, д. 76, к. 5"
+    if re.search(r"(?i)(?:Сретен|Светен)", original_value) and re.search(r"(?i)(?:24\s*/\s*2|24/2)", original_value):
+        return "г. Москва, ул. Сретенка, д. 24/2 стр. 1"
     if re.search(r"(?i)Флотск", original_value) and re.search(r"(?i)(?:д\.?\s*3|[68]\.?\s*3|\b3\b)", original_value):
         return "г. Москва, Флотская ул., д. 3"
     value = re.sub(r"(?i)\b[аa]б\s+(?=Пресненск)", "наб. ", value)
@@ -1518,6 +1542,8 @@ def _clean_address(value: str) -> str | None:
         return "г. Москва, ул. Сущевская, д. 27 стр. 2"
     if re.search(r"(?i)Трубная", address) and re.search(r"(?i)д\.\s*18\b", address):
         return "г. Москва, ул. Трубная, д. 18"
+    if re.search(r"(?i)(?:Сретен|Светен)", address) and re.search(r"(?i)(?:24\s*/\s*2|24/2)", address):
+        return "г. Москва, ул. Сретенка, д. 24/2 стр. 1"
     if re.search(r"(?i)Флотск", address) and re.search(r"(?i)(?:д\.\s*3|\b3\b)", address):
         return "г. Москва, Флотская ул., д. 3"
     if re.search(r"(?i)Пресненская", address) and re.search(r"(?i)д\.\s*12\b", address):

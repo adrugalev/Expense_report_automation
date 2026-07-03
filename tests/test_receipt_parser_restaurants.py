@@ -116,6 +116,28 @@ def test_extract_zveroboy_receipt_with_noisy_name_and_address():
     assert guess_expense_type(text, "Чек за кафе (встреча с Крост).pdf") == "ресторан"
 
 
+def test_extract_frank_by_basta_receipt_with_noisy_name_and_address():
+    text = """
+    F'YINM\\ NS Каг овый. чек ы 2210000
+    Место расчетов
+    Рга й
+    Frank ty Basty
+    1710 "МОЧНОСТЬ" Попова Мавго
+    7 - город Федерального значения Москва. вн,те округ Красносельский.
+    107045, ул Светенка. д. 24/2. стр. 1. помещение УТ. комната 1-5
+    `УММА B =16180.00
+    Wi 7380440802081242
+    1 18708
+    11.07.25 16:34
+    """
+
+    assert extract_seller(text) == "Frank by Баста"
+    assert extract_address(text) == "г. Москва, ул. Сретенка, д. 24/2 стр. 1"
+    assert extract_amount(text) == Decimal("16180.00")
+    assert extract_date(text) == date(2025, 7, 11)
+    assert guess_expense_type(text, "scan_check_frank.pdf") == "ресторан"
+
+
 def test_extract_korchma_receipt_with_noisy_ocr_text():
     text = """
     Кассовый чек
@@ -383,6 +405,22 @@ def test_parse_zveroboy_receipt_pdf():
     assert receipt.date == date(2023, 10, 5)
     assert receipt.amount == Decimal("10250.00")
     assert receipt.fiscal_document_number == "7627"
+
+
+@pytest.mark.skipif(
+    not (LOCAL_SCAN_DIR / "scan_check_frank.pdf").exists(),
+    reason="local Frank by Basta restaurant receipt fixture is unavailable",
+)
+def test_parse_frank_by_basta_receipt_pdf():
+    from src.receipt_parser import parse_receipt_path
+
+    receipt = parse_receipt_path(LOCAL_SCAN_DIR / "scan_check_frank.pdf")
+
+    assert receipt.seller == "Frank by Баста"
+    assert receipt.address == "г. Москва, ул. Сретенка, д. 24/2 стр. 1"
+    assert receipt.date == date(2025, 7, 11)
+    assert receipt.amount == Decimal("16180.00")
+    assert receipt.fiscal_document_number == "18708"
 
 
 @pytest.mark.skipif(
