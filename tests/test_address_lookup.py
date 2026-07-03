@@ -1,6 +1,7 @@
 import json
+from urllib.parse import parse_qs, urlsplit
 
-from src.address_lookup import lookup_address_online, merge_online_address, should_lookup_address
+from src.address_lookup import lookup_address_online, merge_online_address, should_lookup_address, should_verify_restaurant_fields
 
 
 def test_should_lookup_ocr_garbage_address():
@@ -49,6 +50,59 @@ def test_lookup_address_online_prefers_known_restaurant_address(monkeypatch):
 
     assert result
     assert result.address == "г. Москва, ул. Вавилова, д. 1"
+
+
+def test_lookup_address_online_returns_known_restaurant_name_and_address(monkeypatch):
+    def fail_urlopen(request, timeout):
+        raise AssertionError("Known restaurant address should not call online fallback")
+
+    monkeypatch.setattr("src.address_lookup.urlopen", fail_urlopen)
+
+    result = lookup_address_online("Ресторан “Звевобой“", "г. Екатевинбуюг. ул. Посадская. сто. 2 ВА")
+
+    assert result
+    assert result.name == "Ресторан «Зверобой»"
+    assert result.address == "г. Екатеринбург, ул. Посадская, д. 28А"
+
+
+def test_should_verify_restaurant_fields_for_ocr_name_and_address():
+    assert should_verify_restaurant_fields("Ресторан “Звевобой“", "г. Екатевинбуюг. ул. Посадская. сто. 2 ВА")
+    assert not should_verify_restaurant_fields("Остерия Марио", "г. Москва, проспект Вернадского, 119415")
+
+
+def test_lookup_address_online_uses_city_from_ocr_address(monkeypatch):
+    captured_queries = []
+    payload = [
+        {
+            "name": "Новый ресторан",
+            "display_name": "Новый ресторан, Посадская улица, Екатеринбург, Россия",
+            "address": {
+                "amenity": "Новый ресторан",
+                "road": "Посадская улица",
+                "house_number": "28А",
+                "city": "Екатеринбург",
+                "country_code": "ru",
+            },
+        }
+    ]
+
+    class Response:
+        def read(self):
+            return json.dumps(payload).encode("utf-8")
+
+    def fake_urlopen(request, timeout):
+        query = parse_qs(urlsplit(request.full_url).query).get("q", [""])[0]
+        captured_queries.append(query)
+        return Response()
+
+    monkeypatch.setattr("src.address_lookup.urlopen", fake_urlopen)
+
+    result = lookup_address_online("Новый ресторан", "г. Екатевинбуюг. ул. Посадская. сто. 2 ВА")
+
+    assert result
+    assert result.address == "г. Екатеринбург, Посадская улица, д. 28А"
+    assert captured_queries
+    assert "Екатеринбург" in captured_queries[0]
 
 
 def test_merge_online_address_preserves_ocr_house_number():

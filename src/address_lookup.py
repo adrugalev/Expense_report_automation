@@ -37,6 +37,41 @@ KNOWN_RESTAURANT_ADDRESSES = {
     "vasilchuki": "г. Москва, Флотская ул., д. 3",
     "ресторанvasilchuki": "г. Москва, Флотская ул., д. 3",
     "васильчуки": "г. Москва, Флотская ул., д. 3",
+    "зверобой": "г. Екатеринбург, ул. Посадская, д. 28А",
+    "звевобой": "г. Екатеринбург, ул. Посадская, д. 28А",
+    "ресторанзверобой": "г. Екатеринбург, ул. Посадская, д. 28А",
+}
+KNOWN_RESTAURANT_NAMES = {
+    "коре": 'Ресторан "КОРЁ"',
+    "корё": 'Ресторан "КОРЁ"',
+    "smokebbq": "Smoke BBQ",
+    "smokebbqбаргрилькоптильня": "Smoke BBQ",
+    "корчма": "Корчма",
+    "одессамама": "Одесса-мама",
+    "юаньян": "Юаньян",
+    "маньян": "Юаньян",
+    "лонсин": "Юаньян",
+    "50костей": "50 костей",
+    "mrhotрамен": "Mr Hot Рамен",
+    "mrhotramen": "Mr Hot Рамен",
+    "hrhotраней": "Mr Hot Рамен",
+    "osteriamario": "Osteria Mario & Швили",
+    "osteriamarioшвили": "Osteria Mario & Швили",
+    "швили": "Osteria Mario & Швили",
+    "швипи": "Osteria Mario & Швили",
+    "академгородок": "Osteria Mario & Швили",
+    "вьетнамскаякухня": "Вьетнамская кухня",
+    "барruletaproom": "Бар RULE taproom",
+    "ruletaproom": "Бар RULE taproom",
+    "ruleфаргоом": "Бар RULE taproom",
+    "ruleсангоом": "Бар RULE taproom",
+    "барчик": "Бар RULE taproom",
+    "vasilchuki": "Ресторан Vasilchuki",
+    "ресторанvasilchuki": "Ресторан Vasilchuki",
+    "васильчуки": "Ресторан Vasilchuki",
+    "зверобой": "Ресторан «Зверобой»",
+    "звевобой": "Ресторан «Зверобой»",
+    "ресторанзверобой": "Ресторан «Зверобой»",
 }
 
 
@@ -71,20 +106,39 @@ def should_lookup_address(address: str | None) -> bool:
         "]",
         "‚",
         "!",
+        "косква",
+        "екатев",
+        "буюг",
+        "сто.",
     )
     if any(marker in normalized for marker in garbage_markers):
         return True
     if re.search(r"[A-Za-z]{3,}", address) and not re.search(r"(?i)\b(?:street|avenue|road|prospekt|ramen|mario)\b", address):
         return True
-    has_city = bool(re.search(r"(?i)\b(?:г\.?\s*москва|москва|санкт-петербург)\b", address))
+    has_city = bool(re.search(r"(?i)\b(?:г\.?\s*москва|москва|г\.?\s*екатеринбург|екатеринбург|санкт-петербург)\b", address))
     has_street = bool(re.search(r"(?i)\b(?:ул\.?|улица|наб\.?|набережная|пр-кт|проспект|переулок)\b", address))
     return not (has_city and has_street)
+
+
+def should_verify_restaurant_fields(restaurant_name: str | None, address: str | None) -> bool:
+    if should_lookup_address(address):
+        return True
+    if _looks_suspicious_restaurant_name(restaurant_name):
+        return True
+    if _known_restaurant_address(restaurant_name) and address:
+        known_address = _known_restaurant_address(restaurant_name) or ""
+        return _street_key(known_address) != _street_key(address) or _house_key(known_address) != _house_key(address)
+    return False
 
 
 def lookup_address_online(restaurant_name: str | None, ocr_address: str | None, timeout: int = 8) -> AddressLookupResult | None:
     known_address = _known_restaurant_address(restaurant_name)
     if known_address:
-        return AddressLookupResult(address=known_address, name=restaurant_name, source="проверенная база адресов")
+        return AddressLookupResult(
+            address=known_address,
+            name=_known_restaurant_name(restaurant_name) or restaurant_name,
+            source="проверенная база адресов",
+        )
     queries = _build_queries(restaurant_name, ocr_address)
     for query in queries:
         result = _lookup_nominatim(query, timeout=timeout)
@@ -106,11 +160,12 @@ def merge_online_address(online_address: str, ocr_address: str | None) -> str | 
 def _build_queries(restaurant_name: str | None, ocr_address: str | None) -> list[str]:
     name = _clean_restaurant_query(restaurant_name or "")
     hint = _address_query_hint(ocr_address or "")
+    city = _city_query_hint(ocr_address or "")
     queries: list[str] = []
     if name and hint:
         queries.append(f"{name} {hint}")
     if name:
-        queries.append(f"{name} Москва адрес")
+        queries.append(f"{name} {city or 'Москва'} адрес")
     if hint:
         queries.append(hint)
     unique: list[str] = []
@@ -154,7 +209,7 @@ def _format_nominatim_address(address: dict, display_name: str) -> str | None:
     postcode = address.get("postcode")
     if not city or not road:
         return _format_from_display_name(display_name)
-    parts = [f"г. {city}" if city == "Москва" else city, road]
+    parts = [f"г. {city}" if city in {"Москва", "Екатеринбург"} else city, road]
     if house:
         parts.append(f"д. {house}")
     if postcode:
@@ -166,7 +221,7 @@ def _format_from_display_name(display_name: str) -> str | None:
     if not display_name:
         return None
     parts = [part.strip() for part in display_name.split(",") if part.strip()]
-    city = next((part for part in parts if part == "Москва"), "")
+    city = next((part for part in parts if part in {"Москва", "Екатеринбург", "Санкт-Петербург"}), "")
     road = next((part for part in parts if re.search(r"(?i)(?:проспект|улица|набережная|пр-кт|наб\.)", part)), "")
     postcode = next((part for part in parts if re.fullmatch(r"\d{6}", part)), "")
     if not city or not road:
@@ -186,16 +241,24 @@ def _clean_restaurant_query(value: str) -> str:
 
 
 def _known_restaurant_address(value: str | None) -> str | None:
+    return _known_restaurant_value(value, KNOWN_RESTAURANT_ADDRESSES)
+
+
+def _known_restaurant_name(value: str | None) -> str | None:
+    return _known_restaurant_value(value, KNOWN_RESTAURANT_NAMES)
+
+
+def _known_restaurant_value(value: str | None, known_values: dict[str, str]) -> str | None:
     if not value:
         return None
     normalized = value.lower().replace("ё", "е")
     normalized = re.sub(r"(?i)\b(?:ресторан|кафе|бар|гриль|коптильня)\b", "", normalized)
     normalized = re.sub(r"[^a-zа-я0-9]+", "", normalized)
-    if normalized in KNOWN_RESTAURANT_ADDRESSES:
-        return KNOWN_RESTAURANT_ADDRESSES[normalized]
-    for key, address in KNOWN_RESTAURANT_ADDRESSES.items():
+    if normalized in known_values:
+        return known_values[normalized]
+    for key, result in known_values.items():
         if key and key in normalized:
-            return address
+            return result
     return None
 
 
@@ -215,10 +278,62 @@ def _address_query_hint(value: str) -> str:
         return "Москва Староваганьковский переулок 19"
     if "vasilchuki" in lower or "васильч" in lower or "флот" in lower:
         return "Москва Флотская улица 3"
-    city = "Москва" if re.search(r"(?i)(?:москва|hock|hoc)", value) else ""
+    if "звер" in lower or "звев" in lower or "посад" in lower:
+        return "Екатеринбург Посадская улица 28А"
+    city = _city_query_hint(value)
     street_match = re.search(r"(?i)(?:ул\.?|улица|наб\.?|набережная|пр-кт|проспект)\s+[\wА-Яа-яЁё-]+", value)
     street = street_match.group(0) if street_match else ""
     return " ".join(part for part in (city, street) if part)
+
+
+def _city_query_hint(value: str) -> str:
+    normalized = value.lower().replace("ё", "е")
+    if re.search(r"(?i)(?:екатеринбург|екатев|буюг|свердловск)", normalized):
+        return "Екатеринбург"
+    if re.search(r"(?i)(?:москва|косква|hock|hoc)", normalized):
+        return "Москва"
+    if re.search(r"(?i)(?:санкт-петербург|петербург|спб)", normalized):
+        return "Санкт-Петербург"
+    return ""
+
+
+def _looks_suspicious_restaurant_name(value: str | None) -> bool:
+    if not value:
+        return True
+    normalized = value.lower().replace("ё", "е")
+    if len(re.sub(r"[^a-zа-я0-9]+", "", normalized)) < 3:
+        return True
+    return bool(
+        re.search(
+            r"(?i)(?:расч[её]тов|пасчетов|зве[вй]об|нвстц|р[её]счетц|зн\s*ккт|рн\s*ккт|фн|фд|фп)",
+            normalized,
+        )
+    )
+
+
+def _street_key(address: str) -> str:
+    normalized = address.lower().replace("ё", "е")
+    for key in (
+        "посад",
+        "флот",
+        "преснен",
+        "вернад",
+        "вавил",
+        "люблин",
+        "трубн",
+        "сущев",
+        "украин",
+        "староваг",
+        "8 марта",
+    ):
+        if key in normalized:
+            return key
+    return ""
+
+
+def _house_key(address: str) -> str:
+    house = _extract_house_number(address)
+    return house.lower().replace(" ", "") if house else ""
 
 
 def _extract_house_number(value: str) -> str | None:

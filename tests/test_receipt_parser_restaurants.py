@@ -95,6 +95,27 @@ def test_extract_vasilchuki_receipt_with_noisy_total_and_address():
     assert guess_expense_type(text, "Drugalev_check_19062024.pdf") == "ресторан"
 
 
+def test_extract_zveroboy_receipt_with_noisy_name_and_address():
+    text = """
+    итОГ =10250.00
+    БЕЗНАЛИЧНЫМИ =10250.00
+    Общество с ограниченной ответственностью "Зверобой"
+    620102, Свердловская обл..г. Екатевинбуюг. ул. Посадская. сто. 2
+    ВА
+    Место пасчетов Ресторан “Звевобой“
+    ИНН 6658533457
+    ФН 9961440300825330
+    o4 7627
+    $П 2254568363
+    05.10.23 19:07
+    """
+
+    assert extract_seller(text) == "Ресторан “Звевобой“"
+    assert extract_address(text) == "г. Екатевинбуюг. ул. Посадская. сто. 2 ВА"
+    assert extract_amount(text) == Decimal("10250.00")
+    assert guess_expense_type(text, "Чек за кафе (встреча с Крост).pdf") == "ресторан"
+
+
 def test_extract_korchma_receipt_with_noisy_ocr_text():
     text = """
     Кассовый чек
@@ -346,6 +367,22 @@ def test_parse_50_kostey_receipt_pdf():
     assert receipt.date == date(2024, 10, 2)
     assert receipt.amount == Decimal("18980.00")
     assert receipt.fiscal_document_number == "31619"
+
+
+@pytest.mark.skipif(
+    not (LOCAL_SCAN_DIR / "Чек за кафе (встреча с Крост).pdf").exists(),
+    reason="local Zveroboy restaurant receipt fixture is unavailable",
+)
+def test_parse_zveroboy_receipt_pdf():
+    from src.receipt_parser import parse_receipt_path
+
+    receipt = parse_receipt_path(LOCAL_SCAN_DIR / "Чек за кафе (встреча с Крост).pdf")
+
+    assert receipt.seller == "Ресторан «Зверобой»"
+    assert receipt.address == "г. Екатеринбург, ул. Посадская, д. 28А"
+    assert receipt.date == date(2023, 10, 5)
+    assert receipt.amount == Decimal("10250.00")
+    assert receipt.fiscal_document_number == "7627"
 
 
 @pytest.mark.skipif(

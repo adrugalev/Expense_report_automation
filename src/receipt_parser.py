@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import BinaryIO
 from urllib.parse import parse_qs, urlsplit
 
-from .address_lookup import lookup_address_online, merge_online_address, should_lookup_address
+from .address_lookup import lookup_address_online, merge_online_address, should_lookup_address, should_verify_restaurant_fields
 from .models import Receipt
 
 
@@ -148,8 +148,7 @@ def parse_receipt_path(path: Path, file_name: str | None = None) -> Receipt:
     if known_restaurant and not known_receipt:
         known_seller = known_restaurant["seller"]
         known_address = known_restaurant["address"]
-        if not seller or _is_bad_restaurant_name(seller) or _looks_like_ocr_gibberish(seller):
-            seller = known_seller
+        seller = known_seller
         if _should_replace_with_known_address(address, known_address):
             address = known_address
     expense_type = guess_expense_type(text, file_name)
@@ -158,16 +157,22 @@ def parse_receipt_path(path: Path, file_name: str | None = None) -> Receipt:
     comment = None if has_useful_data or known_receipt else "Проверьте распознанные данные"
     if amount_was_missing and amount == Decimal("1.00"):
         comment = _append_comment(comment, _amount_recognition_comment(suffix, text))
-    if (seller or address) and (expense_type == "ресторан" or should_lookup_address(address)):
+    needs_restaurant_verification = expense_type == "ресторан" and should_verify_restaurant_fields(seller, address)
+    if (seller or address) and (needs_restaurant_verification or should_lookup_address(address)):
         online_address = lookup_address_online(seller, address)
         if online_address:
-            if online_address.source == "проверенная база адресов" and should_lookup_address(address):
+            if online_address.source == "проверенная база адресов" and needs_restaurant_verification:
                 merged_address = online_address.address
             else:
                 merged_address = merge_online_address(online_address.address, address)
             if merged_address:
                 address = merged_address
-                if online_address.name and (not seller or _is_bad_restaurant_name(seller) or _looks_like_ocr_gibberish(seller)):
+                if online_address.name and (
+                    needs_restaurant_verification
+                    or not seller
+                    or _is_bad_restaurant_name(seller)
+                    or _looks_like_ocr_gibberish(seller)
+                ):
                     seller = _clean_online_seller_name(online_address.name) or seller
                 comment = _append_comment(comment, f"Адрес уточнён через интернет ({online_address.source}); проверьте")
 
@@ -1310,6 +1315,15 @@ def _known_restaurant_match(
                 r"флотск.{0,80}(?:д\.?\s*)?3\b",
             ),
         ),
+        (
+            "Ресторан «Зверобой»",
+            "г. Екатеринбург, ул. Посадская, д. 28А",
+            (
+                r"зв[её][вр]обой",
+                r"6658533457",
+                r"посадск.{0,80}(?:28\s*[аa]|2\s*в[аa])\b",
+            ),
+        ),
     )
     for profile_seller, profile_address, patterns in profiles:
         if any(re.search(pattern, haystack, re.IGNORECASE) for pattern in patterns):
@@ -1339,6 +1353,7 @@ def _street_marker(address: str) -> str | None:
         "вернад",
         "вавил",
         "флот",
+        "посад",
         "люблин",
         "трубн",
         "садовая",
