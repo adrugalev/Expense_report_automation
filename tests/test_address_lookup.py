@@ -65,6 +65,19 @@ def test_lookup_address_online_returns_known_restaurant_name_and_address(monkeyp
     assert result.address == "г. Екатеринбург, ул. Посадская, д. 28А"
 
 
+def test_lookup_address_online_returns_known_the_pivo_name_and_address(monkeypatch):
+    def fail_urlopen(request, timeout):
+        raise AssertionError("Known restaurant address should not call online fallback")
+
+    monkeypatch.setattr("src.address_lookup.urlopen", fail_urlopen)
+
+    result = lookup_address_online("л В The Пиво", "г. Москва, B-P СТРастной, д. ВА")
+
+    assert result
+    assert result.name == "The Pivo"
+    assert result.address == "г. Москва, Страстной б-р, д. 8А"
+
+
 def test_lookup_address_online_returns_known_gift_store_name_and_address(monkeypatch):
     def fail_urlopen(request, timeout):
         raise AssertionError("Known store address should not call online fallback")

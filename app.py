@@ -19,7 +19,7 @@ from src.models import BusinessTripReport, GiftExpenseReport, Receipt, Represent
 from src.receipt_parser import ensure_builtin_ocr_runtime, ocr_runtime_status, parse_receipt_file, receipt_from_table_row
 from src.report_builders import BuildResult, BusinessTripBuilder, GiftExpenseBuilder, RepresentativeExpenseBuilder
 from src.template_manager import TemplateManager
-from src.version import APP_VERSION_REVISION, app_version_label
+from src.version import APP_VERSION_DATE, APP_VERSION_REVISION, app_version_label
 
 
 PROJECT_ROOT = Path(__file__).resolve().parent
@@ -749,7 +749,7 @@ def _ensure_ocr_runtime_for_uploads(receipt_files) -> None:
 
 def _parse_uploaded_receipt_cached(uploaded) -> Receipt:
     payload = uploaded.getvalue()
-    cache_key = f"v{APP_VERSION_REVISION}:{uploaded.name}:{len(payload)}:{hashlib.sha1(payload).hexdigest()}"
+    cache_key = f"v{APP_VERSION_DATE}:{APP_VERSION_REVISION}:{uploaded.name}:{len(payload)}:{hashlib.sha1(payload).hexdigest()}"
     cache = st.session_state.setdefault("_receipt_parse_cache", {})
     if cache_key not in cache:
         cache[cache_key] = parse_receipt_file(BytesIO(payload), uploaded.name)

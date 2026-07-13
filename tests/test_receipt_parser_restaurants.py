@@ -204,6 +204,30 @@ def test_extract_smoke_bbq_receipt_with_noisy_ocr_text():
     assert guess_expense_type(text, "check_cafe_smokebbq.pdf") == "ресторан"
 
 
+def test_extract_the_pivo_receipt_with_noisy_ocr_text():
+    text = """
+    The Piv0
+    The Р1мо Пильзенское <светлое> 500мл 780.00*0.500 Л =390.00
+    nTor =87240.00
+    CYMMA BE3 HIC =8740.00
+    БЕЗНАЛИЧНЫМИ =8740.00
+    000 БЫК
+    107031, г. Москва, б-р Страстной, д. ВА
+    Место расчетов The ПИВО
+    ИНН 7728482730
+    9Н 7390440903522110
+    9Н 7380440903522110
+    ФД 39047
+    ФП 0492176981
+    """
+
+    assert extract_seller(text) == "The Pivo"
+    assert extract_address(text) == "г. Москва, Страстной б-р, д. 8А"
+    assert extract_amount(text) == Decimal("8740.00")
+    assert extract_fiscal_drive_number(text) == "7380440903522110"
+    assert guess_expense_type(text, "check_thepivo_090726.pdf") == "ресторан"
+
+
 def test_extract_azbuka_vkusa_seller_from_noisy_ocr_text():
     text = """
     @&) азбука вкуса
@@ -472,6 +496,26 @@ def test_parse_altai_premium_gift_receipt_pdf():
     assert receipt.amount == Decimal("3540.00")
     assert receipt.expense_type == "подарки"
     assert receipt.fiscal_document_number == "337"
+
+
+@pytest.mark.skipif(
+    not (LOCAL_SCAN_DIR / "check_thepivo_090726.pdf").exists(),
+    reason="local The Pivo restaurant receipt fixture is unavailable",
+)
+def test_parse_the_pivo_receipt_pdf():
+    from src.receipt_parser import parse_receipt_path
+
+    receipt = parse_receipt_path(LOCAL_SCAN_DIR / "check_thepivo_090726.pdf")
+
+    assert receipt.seller == "The Pivo"
+    assert receipt.address == "г. Москва, Страстной б-р, д. 8А"
+    assert receipt.inn == "7728482730"
+    assert receipt.date == date(2026, 7, 9)
+    assert receipt.amount == Decimal("8740.00")
+    assert receipt.expense_type == "ресторан"
+    assert receipt.fiscal_document_number == "39047"
+    assert receipt.fiscal_drive_number == "7380440903522110"
+    assert receipt.fiscal_sign == "0492176981"
 
 
 @pytest.mark.skipif(

@@ -49,6 +49,10 @@ KNOWN_RESTAURANT_ADDRESSES = {
     "киешниихвосты": "г. Москва, ул. Братиславская, д. 12",
     "kleshnihvosti": "г. Москва, ул. Братиславская, д. 12",
     "rakovarnyakleshnihvosti": "г. Москва, ул. Братиславская, д. 12",
+    "thepivo": "г. Москва, Страстной б-р, д. 8А",
+    "thepiv0": "г. Москва, Страстной б-р, д. 8А",
+    "theпиво": "г. Москва, Страстной б-р, д. 8А",
+    "зеpivo": "г. Москва, Страстной б-р, д. 8А",
     "азбукавкуса": "г. Москва, ул. Люблинская, д. 96",
     "азвукаbkyc": "г. Москва, ул. Люблинская, д. 96",
     "азбукаbkус": "г. Москва, ул. Люблинская, д. 96",
@@ -102,6 +106,10 @@ KNOWN_RESTAURANT_NAMES = {
     "киешниихвосты": "Раковарня «Клешни и Хвосты»",
     "kleshnihvosti": "Раковарня «Клешни и Хвосты»",
     "rakovarnyakleshnihvosti": "Раковарня «Клешни и Хвосты»",
+    "thepivo": "The Pivo",
+    "thepiv0": "The Pivo",
+    "theпиво": "The Pivo",
+    "зеpivo": "The Pivo",
     "азбукавкуса": "Азбука вкуса",
     "азвукаbkyc": "Азбука вкуса",
     "азбукаbkус": "Азбука вкуса",
@@ -157,13 +165,14 @@ def should_lookup_address(address: str | None) -> bool:
         "нолоин",
         "нальйно",
         "мальйо",
+        "b-p",
     )
     if any(marker in normalized for marker in garbage_markers):
         return True
     if re.search(r"[A-Za-z]{3,}", address) and not re.search(r"(?i)\b(?:street|avenue|road|prospekt|ramen|mario)\b", address):
         return True
     has_city = bool(re.search(r"(?i)\b(?:г\.?\s*москва|москва|г\.?\s*екатеринбург|екатеринбург|санкт-петербург)\b", address))
-    has_street = bool(re.search(r"(?i)\b(?:ул\.?|улица|наб\.?|набережная|пр-кт|проспект|переулок)\b", address))
+    has_street = bool(re.search(r"(?i)\b(?:ул\.?|улица|наб\.?|набережная|пр-кт|проспект|переулок|б-р|бульвар)\b", address))
     return not (has_city and has_street)
 
 
@@ -331,6 +340,8 @@ def _address_query_hint(value: str) -> str:
         return "Москва улица Сретенка 24/2"
     if "клешн" in lower or "кнеш" in lower or "хвост" in lower or "хво" in lower or "братислав" in lower or "109451" in lower:
         return "Москва Братиславская улица 12"
+    if "the pivo" in lower or "thepivo" in lower or "the пиво" in lower or "страстн" in lower:
+        return "Москва Страстной бульвар 8А"
     if "алтай" in lower or "altai" in lower or "наметк" in lower or "намётк" in lower or "7727344960" in lower:
         return "Москва улица Намёткина 14"
     city = _city_query_hint(value)
@@ -371,6 +382,7 @@ def _street_key(address: str) -> str:
         "сретен",
         "светен",
         "братислав",
+        "страстн",
         "наметк",
         "намётк",
         "флот",
