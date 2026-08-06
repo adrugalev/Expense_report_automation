@@ -19,7 +19,7 @@ from src.models import BusinessTripReport, GiftExpenseReport, Receipt, Represent
 from src.receipt_parser import ensure_builtin_ocr_runtime, ocr_runtime_status, parse_receipt_file, receipt_from_table_row
 from src.report_builders import BuildResult, BusinessTripBuilder, GiftExpenseBuilder, RepresentativeExpenseBuilder
 from src.template_manager import TemplateManager
-from src.version import APP_VERSION_DATE, APP_VERSION_REVISION, app_version_label
+from src.version import APP_VERSION_DATE, APP_VERSION_REVISION, app_version_history, app_version_label
 
 
 PROJECT_ROOT = Path(__file__).resolve().parent
@@ -428,11 +428,24 @@ REPRESENTATIVE_AUTOFILL_PROFILES = [
 ]
 
 
+@st.dialog("История версий")
+def _show_version_history_dialog() -> None:
+    for entry in app_version_history():
+        st.markdown(f"**Версия {entry.revision} от {entry.date}**")
+        for change in entry.changes:
+            st.markdown(f"- {change}")
+
+
+def _render_version_history_button() -> None:
+    if st.button(app_version_label(), key="version_history_button"):
+        _show_version_history_dialog()
+
+
 def main() -> None:
     st.set_page_config(page_title="Автоматизация отчётных документов", layout="wide")
     _inject_global_css()
     st.title("Автоматизация отчётных документов")
-    st.caption(app_version_label())
+    _render_version_history_button()
 
     directory = EmployeeDirectory(DATA_DIR)
     template_manager = TemplateManager(TEMPLATES_DIR)
@@ -555,6 +568,42 @@ def _inject_global_css() -> None:
     st.markdown(
         """
         <style>
+        h1 {
+            padding-bottom: 0 !important;
+        }
+
+        div.st-key-version_history_button {
+            margin: 0;
+            padding: 0;
+        }
+
+        div.st-key-version_history_button button,
+        div.st-key-version_history_button button:hover,
+        div.st-key-version_history_button button:focus,
+        div.st-key-version_history_button button:active {
+            align-items: flex-start;
+            background: transparent;
+            border: 0;
+            box-shadow: none;
+            color: rgba(49, 51, 63, 0.6);
+            cursor: pointer;
+            font-family: inherit;
+            font-size: 0.875rem;
+            font-weight: 400;
+            line-height: 1.6;
+            min-height: 0;
+            padding: 0;
+        }
+
+        div.st-key-version_history_button button p {
+            color: inherit;
+            font-family: inherit;
+            font-size: inherit;
+            font-weight: inherit;
+            line-height: inherit;
+            margin: 0;
+        }
+
         div[data-testid="stFormSubmitButton"] button,
         div[data-testid="stFormSubmitButton"] button[kind="primary"],
         button[data-testid="stBaseButton-primary"] {
