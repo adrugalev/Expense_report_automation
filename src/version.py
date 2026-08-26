@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 
-APP_VERSION_DATE = "06.08.2026"
+APP_VERSION_DATE = "26.08.2026"
 APP_VERSION_REVISION = 1
 
 
@@ -15,6 +15,25 @@ class VersionHistoryEntry:
 
 
 APP_VERSION_HISTORY = (
+    VersionHistoryEntry(
+        revision=1,
+        date="26.08.2026",
+        changes=(
+            "Завершена финальная верификация web-миграции и добавлен журнал продолжения работ.",
+            "Черновики отчётов разделены по пользователям, улучшена обработка ошибок удаления файлов.",
+            "Исправлены переполнение таблицы и перекрытие формы на desktop, tablet и mobile.",
+        ),
+    ),
+    VersionHistoryEntry(
+        revision=1,
+        date="25.08.2026",
+        changes=(
+            "Добавлено полноценное веб-приложение на Next.js и FastAPI с адаптивным интерфейсом.",
+            "Добавлены вход, роли пользователей, история отчётов, постоянное хранение данных и справочник сотрудников.",
+            "OCR, Tesseract и системные библиотеки включены в серверный Docker-образ и не требуются на компьютерах пользователей.",
+            "Сохранены три сценария отчётов, редактирование чеков и формирование DOCX и ZIP.",
+        ),
+    ),
     VersionHistoryEntry(
         revision=1,
         date="06.08.2026",

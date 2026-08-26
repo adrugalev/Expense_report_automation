@@ -1,160 +1,192 @@
 # Автоматизация отчётных документов
 
-Streamlit-приложение для подготовки комплектов DOCX-документов по трём сценариям:
+Система формирует DOCX-комплекты по командировкам, представительским расходам и подаркам. В репозитории работают два интерфейса над общей Python-бизнес-логикой:
 
-- отчёт за командировку;
-- представительские расходы;
-- расходы на подарки.
+- современное web-приложение: Next.js + FastAPI;
+- исходное Streamlit-приложение как legacy/fallback.
 
-Пользователь выбирает тип отчёта, выбирает сотрудника / инициатора из справочника, загружает чеки, проверяет распознанные данные, заполняет поля конкретного отчёта и получает DOCX-файлы и ZIP-архив.
+Web-версия включает авторизацию, роли, постоянную историю отчётов, CRUD сотрудников, загрузку и OCR чеков, редактирование распознанных данных, генерацию DOCX и скачивание ZIP. OCR выполняется на сервере: пользователям браузера не нужны Python, Tesseract или другие локальные программы.
 
-## Установка
+## Быстрый запуск через Docker
+
+Требуются Docker Engine и Docker Compose.
+
+```bash
+cp .env.example .env
+# Замените пароли и SECRET_KEY в .env
+docker compose up --build -d
+```
+
+Откройте `http://localhost:3000`. Начальные учётные данные берутся из `ADMIN_EMAIL` и `ADMIN_PASSWORD` в `.env`.
+
+Контейнеры:
+
+- `frontend`: production-сборка Next.js, порт 3000;
+- `backend`: FastAPI, OCR, Tesseract `rus+eng`, Poppler и ZBar;
+- `db`: PostgreSQL 17;
+- `report_storage`: загруженные чеки и сформированные документы;
+- `postgres_data`: постоянные данные приложения.
+
+Остановка: `docker compose down`. Данные сохраняются в Docker volumes. Команда `docker compose down -v` удаляет их и должна использоваться только осознанно.
+
+## Локальная разработка
+
+### Backend
+
+Нужен Python 3.12+.
 
 ```powershell
-cd expense_report_automation
 python -m venv .venv
-.\.venv\Scripts\activate
+.\.venv\Scripts\Activate.ps1
 pip install -r requirements.txt
+pip install -e ".\backend[test]"
+alembic -c backend/alembic.ini upgrade head
+python -m uvicorn backend.app.main:app --reload --port 8000
 ```
 
-Для распознавания названия кафе и адреса из сканов/PDF без текстового слоя нужен установленный Tesseract OCR
-с русским языковым пакетом. Если OCR недоступен, приложение всё равно попробует прочитать QR-код, а остальные
-поля можно поправить вручную в таблице чеков.
+По умолчанию backend использует SQLite в `storage/expense_web.db`. API: `http://localhost:8000/api/health`; OpenAPI: `http://localhost:8000/docs`.
 
-Минимум для тестов:
+Для OCR сканов при локальном запуске backend установите Tesseract с русским и английским языками и Poppler. В Docker они уже включены.
+
+### Frontend
+
+Нужны Node.js 22+ и pnpm.
 
 ```powershell
-pip install pytest pydantic python-docx docxtpl pandas openpyxl num2words
+cd frontend
+corepack enable
+pnpm install
+pnpm dev
 ```
 
-## Запуск
+Откройте `http://localhost:3000`. Next.js проксирует `/api/*` на `http://127.0.0.1:8000`. Другой backend задаётся через `BACKEND_INTERNAL_URL`.
+
+Начальная dev-учётная запись: `admin@example.com` / `ChangeMe123!`. Она создаётся только в пустой БД; для общей или production-среды обязательно задайте собственные значения.
+
+## Legacy Streamlit
+
+Старое приложение сохранено без изменения команды запуска:
 
 ```powershell
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+pip install -r requirements.txt
 streamlit run app.py
 ```
 
-Если среда развёртывания ожидает стандартный файл Streamlit, укажите:
+Альтернативный entrypoint для Streamlit Cloud: `streamlit run streamlit_app.py`. Обычно legacy-интерфейс доступен по адресу `http://localhost:8501`. Он продолжает использовать `data/employees.json`, `templates/` и `output/`.
 
-```powershell
-streamlit run streamlit_app.py
+## Архитектура
+
+```text
+Browser -> Next.js -> FastAPI -> shared src/ -> DOCX / OCR
+                         |             |
+                         v             v
+                    PostgreSQL      templates/
+
+Legacy Streamlit -----------------> shared src/
 ```
 
-После запуска приложение откроется в браузере. Обычно адрес: `http://localhost:8501`.
+- `frontend/`: Next.js App Router, React, TypeScript, Tailwind, TanStack Query/Table, React Hook Form, Zod.
+- `backend/`: FastAPI routes, Pydantic-схемы, service layer, SQLAlchemy, Alembic, JWT-cookie auth.
+- `src/`: общие модели, парсер чеков, OCR, генераторы DOCX и оркестрация отчётов.
+- `templates/`: существующие DOCX-шаблоны.
+- `data/`: исходный справочник сотрудников и профили автозаполнения.
+- `storage/`: локальная SQLite, uploads и результаты web-версии; не коммитится.
+- `app.py`: legacy Streamlit UI.
+
+Подробности и диаграмма: [ARCHITECTURE.md](ARCHITECTURE.md). Результаты миграции: [MIGRATION_REPORT.md](MIGRATION_REPORT.md).
+
+## Пользовательский сценарий
+
+1. Войдите в систему.
+2. Откройте «Новый отчёт» и выберите тип.
+3. Найдите сотрудника по ФИО или должности.
+4. Перетащите PDF/JPG/PNG чеки или добавьте строку вручную.
+5. Проверьте дату, продавца, адрес, ИНН, сумму и ФД.
+6. Заполните поля выбранного типа отчёта.
+7. Сформируйте документы и скачайте DOCX либо общий ZIP.
+8. Повторно открыть результат можно из «Истории».
+
+Черновик формы сохраняется в браузере до успешного формирования или ручной очистки.
 
 ## Справочник сотрудников
 
-Справочник хранится в `data/employees.json`. Стартовые контактные лица взяты из проекта “Генератор КП”:
+Начальные сотрудники импортируются из `data/employees.json` при создании пустой БД. После этого web-версия хранит справочник в БД. Администратор может создавать, редактировать и удалять записи в разделе «Справочники». Выбранный профиль автоматически передаётся генератору документов.
 
-- Баранова Гиляна Басанговна;
-- Другалев Александр Александрович;
-- Конопельнюк Антон Петрович;
-- Платонов Антон Александрович;
-- Зимин Сергей Александрович;
-- Попов Леонид Николаевич.
+## Шаблоны документов
 
-В интерфейсе можно выбрать сотрудника, отредактировать карточку или добавить нового. Данные сотрудника автоматически используются во всех типах документов.
+Существующие шаблоны не перемещались: `templates/business_trip/`, `templates/representative_expenses/`, `templates/gifts/`.
 
-Поддерживаемые поля сотрудника:
+Генерация остаётся на Python и использует `docxtpl`/`python-docx`. Web frontend не генерирует и не изменяет DOCX. Представительские расходы и подарки сохраняют программные генераторы legacy-проекта; командировка использует существующие шаблоны.
 
-- `id`
-- `full_name`
-- `short_name`
-- `position`
-- `company`
-- `phone`
-- `email`
-- `manager_name`
-- `manager_position`
-- `default_signatory_name`
-- `default_signatory_position`
+## Конфигурация
 
-## Как добавить шаблон
+Backend читает корневой `.env` и `backend/.env`.
 
-Положите DOCX-файл в одну из папок:
+| Переменная | Назначение | Dev default |
+| --- | --- | --- |
+| `DATABASE_URL` | SQLAlchemy URL | SQLite в `storage/` |
+| `SECRET_KEY` | подпись JWT | только dev-значение |
+| `ADMIN_EMAIL` | первый администратор | `admin@example.com` |
+| `ADMIN_PASSWORD` | пароль первого администратора | `ChangeMe123!` |
+| `STORAGE_DIR` | uploads и результаты | `storage/` |
+| `TEMPLATES_DIR` | DOCX-шаблоны | `templates/` |
+| `LEGACY_DATA_DIR` | начальные JSON-данные | `data/` |
+| `MAX_UPLOAD_SIZE` | предел файла в байтах | 15 МБ |
+| `ALLOWED_ORIGINS` | CORS allowlist | localhost:3000 |
+| `TRUSTED_HOSTS` | допустимые Host headers | localhost |
+| `COOKIE_SECURE` | Secure cookie | `false` |
 
-- `templates/business_trip/`
-- `templates/representative_expenses/`
-- `templates/gifts/`
+В production используйте длинный случайный `SECRET_KEY`, сильные пароли, `COOKIE_SECURE=true`, конкретные HTTPS origin/host и резервное копирование обоих volumes.
 
-Также шаблон можно загрузить через боковую панель Streamlit. Если шаблонов нет, приложение создаёт стартовые DOCX-шаблоны с плейсхолдерами.
+## База данных и миграции
 
-## Плейсхолдеры
+Локально допустима SQLite, в Docker и production используется PostgreSQL. Схема управляется Alembic:
 
-Шаблоны заполняются через `docxtpl`. Примеры:
+```powershell
+alembic -c backend/alembic.ini upgrade head
+alembic -c backend/alembic.ini current
+```
 
-- `{{ employee.full_name }}`
-- `{{ employee.position }}`
-- `{{ employee.company }}`
-- `{{ initiator.full_name }}`
-- `{{ initiator.position }}`
-- `{{ report_date }}`
-- `{{ trip_city }}`
-- `{{ trip_start_date }}`
-- `{{ trip_end_date }}`
-- `{{ total_amount }}`
-- `{{ total_amount_words }}`
-- `{{ counterparty }}`
-- `{{ meeting_purpose }}`
-- `{{ meeting_result }}`
-- `{{ restaurant_name }}`
-- `{{ gift_name }}`
-- `{{ gift_quantity }}`
-- `{{ recipients_text }}`
-- `{{ receipts_table }}`
-- `{{ receipt_attachments_text }}`
-- `{{ taxi_trip_dates }}`
-- `{{ taxi_compensation_purpose }}`
-- `{{ total_amount_integer }}`
-- `{{ total_amount_words_integer }}`
-- `{{ report_date_short }}`
-- `{{ employee.signature_name }}`
-
-Если плейсхолдер не заполнен, рядом с итоговым DOCX создаётся предупреждение `.warnings.txt`, а в интерфейсе показывается предупреждение.
-
-## Как пользоваться
-
-1. Выберите тип отчёта.
-2. Выберите сотрудника / инициатора из справочника.
-3. При необходимости загрузите чеки и DOCX-шаблоны.
-4. Проверьте таблицу чеков и исправьте данные вручную.
-5. Заполните поля отчёта.
-6. Нажмите “Сформировать документы”.
-7. Скачайте отдельные DOCX-файлы или ZIP-архив.
-
-Для представительских расходов при нескольких чеках можно выбрать один общий комплект документов или отдельный комплект на каждый чек.
-
-## Ограничения MVP
-
-- Для PDF-чеков Яндекс Такси поддержан надёжный разбор текстового слоя и QR: дата, сумма, продавец, ИНН, номер чека, смена, ККТ, ФД, ФН, ФП.
-- OCR сделан как вспомогательная возможность для фотографий и сканов: для ресторанных чеков он пытается извлечь название кафе и адрес; если OCR/QR не сработали, данные вводятся вручную.
-- PDF-конвертация чеков и QR зависят от установленных системных библиотек.
-- Стартовые шаблоны являются рабочими заготовками, а не финальным корпоративным стилем.
-- PDF-экспорт DOCX не включён; его можно добавить через LibreOffice headless.
-- Сложная логика анализа предоставленных корпоративных DOCX-шаблонов будет точнее после передачи реальных примеров.
-
-## Дальнейшие улучшения
-
-- Импорт реального корпоративного справочника из Excel.
-- Автоматическое создание шаблонов с плейсхолдерами на основе предоставленных DOCX.
-- Более точное OCR/QR-распознавание чеков.
-- PDF-экспорт сформированных документов.
-- Роли пользователей и история сформированных комплектов.
-- Проверка соответствия сумм реестров и документов перед генерацией.
+В БД хранятся пользователи, сотрудники, метаданные загрузок, отчёты и сформированные файлы. Сами бинарные файлы находятся в `STORAGE_DIR`; для нескольких экземпляров backend потребуется общее object/file storage.
 
 ## Тесты
 
 ```powershell
+# Legacy и shared core
 pytest
+
+# Backend API и generation pipeline
+pytest backend/tests
+
+# Frontend
+cd frontend
+pnpm test
+pnpm lint
+pnpm build
+
+# E2E при запущенных backend и frontend
+pnpm exec playwright install chromium
+pnpm test:e2e
 ```
 
-Покрыты:
+## Развёртывание на Linux VPS
 
-- форматирование рублей;
-- сумма прописью;
-- форматирование дат;
-- валидация дат командировки и чеков;
-- итоговая сумма по чекам;
-- парсинг реальных PDF-чеков Яндекс Такси;
-- справочник сотрудников;
-- context для DOCX-шаблонов;
-- создание DOCX на тестовом шаблоне.
+1. Установите Docker Engine и Compose plugin.
+2. Клонируйте репозиторий и создайте `.env` из `.env.example`.
+3. Задайте секреты, `COOKIE_SECURE=true` и выполните `docker compose up --build -d`.
+4. Разместите nginx/Caddy перед портом 3000 и выпустите TLS-сертификат.
+5. Не публикуйте PostgreSQL и backend наружу; внешним должен быть только HTTPS frontend.
+6. Настройте резервные копии `postgres_data` и `report_storage`, ротацию логов и мониторинг `/api/health`.
+7. При масштабировании вынесите файлы в S3-совместимое хранилище и запускайте миграции один раз перед обновлением backend.
+
+Схема: Internet -> HTTPS reverse proxy -> Next.js -> FastAPI -> PostgreSQL + file storage.
+
+## Безопасность файлов
+
+Backend проверяет расширение, MIME, magic bytes, максимальный размер, очищает имя файла и изолирует пользовательские каталоги. Разрешены PDF, PNG, JPG и JPEG. Пути скачивания проверяются относительно каталога отчётов. Для публичного сервиса дополнительно рекомендуется антивирусная проверка uploads и политика срока хранения.
+
+## Миграция
+
+Streamlit не используется ни frontend, ни FastAPI. Общие модули `src/` не зависят от UI. `app.py` сохранён и продолжает обращаться к тому же core. Никакие шаблоны и исходные данные не удалены. Полная матрица функций и известные различия находятся в [MIGRATION_REPORT.md](MIGRATION_REPORT.md).

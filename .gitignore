@@ -8,4 +8,13 @@ venv/
 output/*
 !output/.gitkeep
 *.zip
+storage/
+backend/*.egg-info/
+frontend/node_modules/
+frontend/.next/
+frontend/playwright-report/
+frontend/test-results/
+frontend/coverage/
+.coverage
+coverage.xml
 
