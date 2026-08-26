@@ -7,7 +7,7 @@ from src.approval import apply_employee_business_rules
 from src.models import Employee
 from src.utils import slugify_file_part
 
-from ..database_models import EmployeeRecord
+from ..database_models import EmployeeRecord, UserRecord
 from ..schemas.employee import EmployeeCreate, EmployeeResponse, EmployeeUpdate
 
 
@@ -36,6 +36,9 @@ class EmployeeService:
     def get_core(self, employee_id: str) -> Employee:
         return Employee.model_validate(self._response(self.get_record(employee_id)).model_dump())
 
+    def get(self, employee_id: str) -> EmployeeResponse:
+        return self._response(self.get_record(employee_id))
+
     def create(self, data: EmployeeCreate) -> EmployeeResponse:
         employee_id = data.id or slugify_file_part(data.full_name.lower(), "employee")
         if self.session.get(EmployeeRecord, employee_id):
@@ -48,14 +51,28 @@ class EmployeeService:
 
     def update(self, employee_id: str, data: EmployeeUpdate) -> EmployeeResponse:
         record = self.get_record(employee_id)
+        linked_user = self.session.scalar(select(UserRecord).where(UserRecord.employee_id == employee_id))
+        if linked_user and not data.email:
+            raise EmployeeConflictError("Нельзя удалить email у сотрудника с учётной записью")
+        if linked_user and data.email:
+            normalized_email = str(data.email).strip().lower()
+            email_owner = self.session.scalar(select(UserRecord).where(UserRecord.email == normalized_email))
+            if email_owner and email_owner.id != linked_user.id:
+                raise EmployeeConflictError("Этот email уже используется другой учётной записью")
         normalized = apply_employee_business_rules(Employee(id=employee_id, **data.model_dump()))
         for key, value in normalized.model_dump(exclude={"id"}).items():
             setattr(record, key, value)
+        if linked_user:
+            linked_user.full_name = normalized.full_name
+            linked_user.email = str(normalized.email).strip().lower()
         self.session.commit()
         return self._response(record)
 
     def delete(self, employee_id: str) -> None:
         record = self.get_record(employee_id)
+        linked_user = self.session.scalar(select(UserRecord).where(UserRecord.employee_id == employee_id))
+        if linked_user:
+            raise EmployeeConflictError("Сначала отключите учётную запись сотрудника")
         self.session.delete(record)
         self.session.commit()
 

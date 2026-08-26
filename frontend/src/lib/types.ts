@@ -1,4 +1,4 @@
-export type Role = "admin" | "user" | "viewer";
+export type Role = "admin" | "employee";
 export type ReportType = "business_trip" | "representative_expenses" | "gifts";
 export type BuildMode = "single" | "per_receipt" | "per_receipt_different_companies";
 export type ReportStatus = "processing" | "completed" | "failed";
@@ -9,6 +9,16 @@ export interface User {
   email: string;
   full_name: string;
   role: Role;
+  employee_id: string | null;
+}
+
+export interface EmployeeAccount {
+  employee_id: string;
+  full_name: string;
+  email: string | null;
+  has_account: boolean;
+  is_active: boolean;
+  role: Role | null;
 }
 
 export interface Employee {

@@ -22,9 +22,12 @@ class Settings(BaseSettings):
     templates_dir: Path = PROJECT_ROOT / "templates"
     legacy_data_dir: Path = PROJECT_ROOT / "data"
     max_upload_size: int = 15 * 1024 * 1024
-    admin_email: str = "admin@example.com"
+    admin_email: str = "aleksandr.drugalev@h-xgroup.com"
     admin_password: str = "ChangeMe123!"
-    admin_name: str = "Администратор"
+    admin_name: str = "Другалев Александр Александрович"
+    admin_employee_id: str = "drugalev"
+    employee_id: str = "baranova"
+    employee_password: str = "Employee123!"
     cookie_name: str = "expense_session"
     cookie_secure: bool = False
     log_level: str = "INFO"

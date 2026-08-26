@@ -43,12 +43,21 @@ class ReportNotFoundError(LookupError):
     pass
 
 
+class ReportPermissionError(PermissionError):
+    pass
+
+
 class ReportService:
     def __init__(self, session: Session, settings: Settings):
         self.session = session
         self.settings = settings
 
     def generate(self, request: ReportGenerateRequest, user: UserRecord) -> ReportDetailResponse:
+        if user.role != "admin":
+            if not user.employee_id:
+                raise ReportPermissionError("Учётная запись не связана с сотрудником")
+            if request.employee_id != user.employee_id:
+                raise ReportPermissionError("Сотрудник может формировать отчёты только для себя")
         employee = EmployeeService(self.session).get_core(request.employee_id)
         report_id = str(uuid4())
         record = ReportRecord(
@@ -107,7 +116,13 @@ class ReportService:
             .where(ReportRecord.id == report_id)
             .options(selectinload(ReportRecord.files))
         )
-        if not record or (record.created_by != user.id and user.role != "admin"):
+        employee_can_open = (
+            user.role == "employee"
+            and record
+            and record.created_by == user.id
+            and record.employee_id == user.employee_id
+        )
+        if not record or (user.role != "admin" and not employee_can_open):
             raise ReportNotFoundError(report_id)
         request = self._validate_request(record.input_data)
         summary = self._summary(record)

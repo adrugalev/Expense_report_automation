@@ -18,8 +18,12 @@ os.environ.update(
         "DATABASE_URL": f"sqlite:///{(TEST_ROOT / 'test.db').as_posix()}",
         "STORAGE_DIR": str(TEST_ROOT / "storage"),
         "SECRET_KEY": "test-secret-key-with-sufficient-length",
-        "ADMIN_EMAIL": "admin@example.com",
+        "ADMIN_EMAIL": "aleksandr.drugalev@h-xgroup.com",
         "ADMIN_PASSWORD": "TestPassword123!",
+        "ADMIN_NAME": "Другалев Александр Александрович",
+        "ADMIN_EMPLOYEE_ID": "drugalev",
+        "EMPLOYEE_ID": "baranova",
+        "EMPLOYEE_PASSWORD": "EmployeeTest123!",
         "TRUSTED_HOSTS": "testserver,localhost,127.0.0.1",
     }
 )
@@ -40,7 +44,7 @@ def client():
 def authenticated_client(client: TestClient) -> TestClient:
     response = client.post(
         "/api/auth/login",
-        json={"email": "admin@example.com", "password": "TestPassword123!"},
+        json={"email": "aleksandr.drugalev@h-xgroup.com", "password": "TestPassword123!"},
     )
     assert response.status_code == 200
     return client

@@ -7,16 +7,22 @@ from sqlalchemy.orm import Session
 from ..config import Settings, get_settings
 from ..database import get_db
 from ..database_models import UserRecord
-from ..dependencies import get_current_user
-from ..schemas.auth import LoginRequest, SessionResponse, UserResponse
-from ..security import create_access_token, verify_password
+from ..dependencies import get_current_user, require_roles
+from ..schemas.auth import ChangeOwnPasswordRequest, LoginRequest, SessionResponse, UserResponse
+from ..security import create_access_token, hash_password, verify_password
 
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
 
 def _user_response(user: UserRecord) -> UserResponse:
-    return UserResponse(id=user.id, email=user.email, full_name=user.full_name, role=user.role)
+    return UserResponse(
+        id=user.id,
+        email=user.email,
+        full_name=user.full_name,
+        role=user.role,
+        employee_id=user.employee_id,
+    )
 
 
 @router.post("/login", response_model=SessionResponse)
@@ -45,6 +51,25 @@ def login(
 @router.get("/me", response_model=UserResponse)
 def me(user: UserRecord = Depends(get_current_user)) -> UserResponse:
     return _user_response(user)
+
+
+@router.put("/password", status_code=status.HTTP_204_NO_CONTENT)
+def change_own_password(
+    data: ChangeOwnPasswordRequest,
+    session: Session = Depends(get_db),
+    user: UserRecord = Depends(require_roles("admin")),
+) -> Response:
+    if not verify_password(data.current_password, user.password_hash):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Текущий пароль указан неверно")
+    if data.current_password == data.new_password:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Новый пароль должен отличаться от текущего",
+        )
+    user.password_hash = hash_password(data.new_password)
+    session.add(user)
+    session.commit()
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.post("/logout", status_code=status.HTTP_204_NO_CONTENT)

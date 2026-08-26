@@ -55,13 +55,20 @@ SQLite is the local default. The same SQLAlchemy models support PostgreSQL in pr
 
 Persistent entities:
 
-- users and roles;
+- users, roles and one-to-one employee account links;
 - employees;
 - uploaded receipt metadata;
 - reports and validated input snapshots;
 - generated file metadata.
 
 Binary files remain in configurable filesystem storage. Database rows never contain whole DOCX/PDF binaries.
+
+## Authorization
+
+- `admin` sees the dashboard, all reports, employee directory and account settings.
+- `employee` can upload receipts, generate a report only for its linked `employee_id`, open the newly generated result and download its files.
+- Both roles use the employee-directory email as the login; the initial admin is linked to `drugalev`.
+- Dashboard, report list and account management are protected by backend role dependencies; frontend route guards only mirror these server-side rules.
 
 ## Generation pipeline
 
@@ -90,7 +97,7 @@ sequenceDiagram
 
 - email/password login with Argon2 hashes;
 - signed JWT in an HttpOnly cookie;
-- `admin`, `user` and `viewer` roles;
+- `admin` and `employee` roles enforced by backend dependencies;
 - upload extension, MIME, file-signature, filename and size validation;
 - per-report storage directories;
 - configured CORS allowlist;
@@ -99,4 +106,4 @@ sequenceDiagram
 
 ## Deployment
 
-Docker Compose provides PostgreSQL, backend and production Next.js. A Linux VPS places nginx/HTTPS in front of the frontend; Next.js proxies same-origin `/api` requests to FastAPI.
+Docker Compose provides PostgreSQL, backend and production Next.js for a VPS. The root `Dockerfile` packages Next.js, FastAPI and OCR into one cloud container; a persistent `/app/storage` volume holds SQLite, uploads and generated files. Next.js proxies same-origin `/api` requests to FastAPI.

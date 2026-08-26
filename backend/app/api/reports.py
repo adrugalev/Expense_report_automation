@@ -21,7 +21,7 @@ from ..schemas.report import (
     RepresentativeSuggestionRequest,
     RepresentativeSuggestionResponse,
 )
-from ..services.report_service import ReportNotFoundError, ReportService
+from ..services.report_service import ReportNotFoundError, ReportPermissionError, ReportService
 
 
 router = APIRouter(prefix="/reports", tags=["reports"])
@@ -56,7 +56,7 @@ def report_types(_user: UserRecord = Depends(get_current_user)) -> list[ReportTy
 @router.post("/suggestions/representative", response_model=RepresentativeSuggestionResponse)
 def representative_suggestion(
     data: RepresentativeSuggestionRequest,
-    _user: UserRecord = Depends(require_roles("admin", "user")),
+    _user: UserRecord = Depends(require_roles("admin", "employee")),
 ) -> RepresentativeSuggestionResponse:
     profile = choose_profile(data.signature, data.recent_counterparties)
     completed = complete_representative_fields(
@@ -76,12 +76,14 @@ async def generate_report(
     request: ReportGenerateRequest = Body(..., discriminator="report_type"),
     session: Session = Depends(get_db),
     settings: Settings = Depends(get_settings),
-    user: UserRecord = Depends(require_roles("admin", "user")),
+    user: UserRecord = Depends(require_roles("admin", "employee")),
 ) -> ReportDetailResponse:
     try:
         return await run_in_threadpool(ReportService(session, settings).generate, request, user)
     except LookupError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Сотрудник не найден") from exc
+    except ReportPermissionError as exc:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(exc)) from exc
 
@@ -92,7 +94,7 @@ def list_reports(
     offset: int = Query(default=0, ge=0),
     session: Session = Depends(get_db),
     settings: Settings = Depends(get_settings),
-    user: UserRecord = Depends(get_current_user),
+    user: UserRecord = Depends(require_roles("admin")),
 ) -> ReportListResponse:
     return ReportService(session, settings).list(user, limit=limit, offset=offset)
 

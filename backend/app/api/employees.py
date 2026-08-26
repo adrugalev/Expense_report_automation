@@ -16,9 +16,17 @@ router = APIRouter(prefix="/employees", tags=["employees"])
 @router.get("", response_model=list[EmployeeResponse])
 def list_employees(
     session: Session = Depends(get_db),
-    _user: UserRecord = Depends(get_current_user),
+    user: UserRecord = Depends(get_current_user),
 ) -> list[EmployeeResponse]:
-    return EmployeeService(session).list()
+    service = EmployeeService(session)
+    if user.role == "admin":
+        return service.list()
+    if not user.employee_id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Учётная запись не связана с сотрудником")
+    try:
+        return [service.get(user.employee_id)]
+    except EmployeeNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Карточка сотрудника не найдена") from exc
 
 
 @router.post("", response_model=EmployeeResponse, status_code=status.HTTP_201_CREATED)
@@ -44,6 +52,8 @@ def update_employee(
         return EmployeeService(session).update(employee_id, data)
     except EmployeeNotFoundError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Сотрудник не найден") from exc
+    except EmployeeConflictError as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
 
 
 @router.delete("/{employee_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -56,4 +66,6 @@ def delete_employee(
         EmployeeService(session).delete(employee_id)
     except EmployeeNotFoundError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Сотрудник не найден") from exc
+    except EmployeeConflictError as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
     return Response(status_code=status.HTTP_204_NO_CONTENT)

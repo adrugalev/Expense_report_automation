@@ -13,7 +13,7 @@
 - SQLAlchemy и Alembic;
 - SQLite для локальной разработки, PostgreSQL в Docker/production;
 - Argon2 password hashing и JWT в HttpOnly cookie;
-- роли `admin`, `user`, `viewer`;
+- роли `admin` и `employee` с привязкой учётной записи сотрудника к его карточке;
 - постоянная история отчётов и файлов;
 - общий Python core для обоих интерфейсов.
 
@@ -27,7 +27,7 @@
 | Комплект на каждый чек | Да | Да | `build_mode=per_receipt` | Migrated |
 | Разные организации по чекам | Да | Да | `build_mode=per_receipt_different_companies` | Migrated |
 | Подарки | Да | Да | `POST /api/reports/generate` | Migrated |
-| Выбор сотрудника | Да | Поиск + dropdown | `GET /api/employees` | Improved |
+| Выбор сотрудника | Да | Admin: поиск; employee: только собственная карточка | `GET /api/employees` | Improved |
 | Справочник сотрудников | JSON | CRUD + БД | `/api/employees` | Improved |
 | Загрузка PDF/JPG/PNG | Да | Drag & drop, статусы, удаление | `/api/uploads` | Improved |
 | OCR русского текста | Сервер Streamlit | Сервер FastAPI/Docker | Upload service | Improved |
@@ -42,6 +42,7 @@
 | Черновик формы | Session state | Persistent browser draft | Frontend | Improved |
 | История отчётов | Нет | Да | `GET /api/reports` | Improved |
 | Авторизация и роли | Нет | Да | `/api/auth/*` | Improved |
+| Пароли сотрудников | Нет | Управление администратором | `/api/accounts/employees/*` | Improved |
 | Light/Dark/System | Нет | Да | Frontend | Improved |
 | Mobile/tablet UI | Ограниченно | Да | Frontend | Improved |
 | Загрузка DOCX-шаблонов из UI | Фактически отсутствует | Нет | Нет | Legacy documentation only |
@@ -54,12 +55,14 @@
 - Загрузка асинхронная; повторная генерация блокируется на время запроса.
 - Отчёты и справочники сохраняются между перезапусками.
 - Файлы изолированы по пользователю/отчёту, имена и пути проверяются.
+- Обзор и общая история доступны только администратору; employee account не может сформировать отчёт за другого сотрудника даже прямым API-запросом.
+- Администратор связан с карточкой Другалёва; email из справочника является логином для обеих ролей.
 - OCR выполняется централизованно с `rus+eng`, установка на клиентских компьютерах не требуется.
 - Ошибки API структурированы, frontend показывает inline validation, loading/empty/error states и краткие toast-сообщения.
 
 ## Pending
 
-- Управление пользователями и ролями через UI; первый admin создаётся из env.
+- Отключение учётных записей сотрудников через UI; создание доступа и смена пароля уже доступны администратору.
 - Object storage для горизонтального масштабирования.
 - Антивирусный scanner и автоматическая политика удаления старых uploads.
 - Фоновая очередь для очень больших пакетов; текущая генерация выполняется в thread pool.
@@ -75,10 +78,12 @@
 ## Verification
 
 - Shared/legacy pytest проверяет модели, парсер, шаблоны, document context и Streamlit helpers.
-- Backend pytest проверяет auth, CRUD, uploads, все типы/режимы, скачивание DOCX и ZIP.
+- Backend pytest проверяет auth, разделение ролей, смену пароля, запрет истории сотруднику, CRUD, uploads, все типы/режимы, скачивание DOCX и ZIP.
 - Vitest проверяет frontend utilities и компоненты.
 - Playwright проверяет вход, навигацию и полный сценарий формирования документа.
 - Production Next.js build выполняет TypeScript validation всех маршрутов.
 - Финальный HTTP smoke проверяет frontend и API через same-origin proxy.
 - Compose YAML проверен структурно; image build не выполнялся, потому что на текущем host нет Docker Engine.
 - Сгенерированный DOCX проверен как OOXML/ZIP и через извлечение текста/таблицы; визуальный DOCX-render недоступен без LibreOffice или Word на host.
+- Внешний HTTPS-маршрут через Cloudflare Quick Tunnel проверен login/API/DOCX generation; ссылка временная и зависит от работающего локального host.
+- Публичное разграничение admin/employee проверено API и 12 Playwright-сценариями на desktop/tablet/mobile; frontend работает из production build.

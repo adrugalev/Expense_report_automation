@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Generator
 
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, inspect, text
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 
 from .config import get_settings
@@ -30,3 +30,11 @@ def create_database_schema() -> None:
     from . import database_models  # noqa: F401
 
     Base.metadata.create_all(bind=engine)
+    if engine.dialect.name == "sqlite":
+        columns = {column["name"] for column in inspect(engine).get_columns("users")}
+        if "employee_id" not in columns:
+            with engine.begin() as connection:
+                connection.execute(text("ALTER TABLE users ADD COLUMN employee_id VARCHAR(100)"))
+                connection.execute(
+                    text("CREATE UNIQUE INDEX IF NOT EXISTS ix_users_employee_id ON users (employee_id)")
+                )

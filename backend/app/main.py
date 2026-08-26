@@ -10,7 +10,7 @@ from fastapi.responses import JSONResponse
 from fastapi.encoders import jsonable_encoder
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
-from .api import auth, dashboard, employees, health, meta, reports, uploads
+from .api import accounts, auth, dashboard, employees, health, meta, reports, uploads
 from .config import get_settings
 from .database import SessionLocal, create_database_schema
 from .seed import seed_initial_data
@@ -77,5 +77,5 @@ async def unhandled_exception_handler(_request: Request, exc: Exception) -> JSON
     )
 
 
-for router in (health.router, meta.router, auth.router, dashboard.router, employees.router, uploads.router, reports.router):
+for router in (health.router, meta.router, auth.router, accounts.router, dashboard.router, employees.router, uploads.router, reports.router):
     app.include_router(router, prefix="/api")

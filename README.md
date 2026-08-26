@@ -5,7 +5,7 @@
 - современное web-приложение: Next.js + FastAPI;
 - исходное Streamlit-приложение как legacy/fallback.
 
-Web-версия включает авторизацию, роли, постоянную историю отчётов, CRUD сотрудников, загрузку и OCR чеков, редактирование распознанных данных, генерацию DOCX и скачивание ZIP. OCR выполняется на сервере: пользователям браузера не нужны Python, Tesseract или другие локальные программы.
+Web-версия включает авторизацию с ролями администратора и сотрудника, постоянную историю отчётов, CRUD сотрудников, загрузку и OCR чеков, редактирование распознанных данных, генерацию DOCX и скачивание ZIP. Администратор видит общий обзор и всю историю, а сотрудник формирует отчёты только от своего имени и не имеет доступа к истории. OCR выполняется на сервере: пользователям браузера не нужны Python, Tesseract или другие локальные программы.
 
 ## Быстрый запуск через Docker
 
@@ -17,7 +17,7 @@ cp .env.example .env
 docker compose up --build -d
 ```
 
-Откройте `http://localhost:3000`. Начальные учётные данные берутся из `ADMIN_EMAIL` и `ADMIN_PASSWORD` в `.env`.
+Откройте `http://localhost:3000`. Начальные учётные данные берутся из `ADMIN_EMAIL`/`ADMIN_PASSWORD` и `EMPLOYEE_ID`/`EMPLOYEE_PASSWORD` в `.env`. Логин сотрудника — email записи `EMPLOYEE_ID` из справочника.
 
 Контейнеры:
 
@@ -61,7 +61,12 @@ pnpm dev
 
 Откройте `http://localhost:3000`. Next.js проксирует `/api/*` на `http://127.0.0.1:8000`. Другой backend задаётся через `BACKEND_INTERNAL_URL`.
 
-Начальная dev-учётная запись: `admin@example.com` / `ChangeMe123!`. Она создаётся только в пустой БД; для общей или production-среды обязательно задайте собственные значения.
+Начальные dev-учётные записи:
+
+- администратор: `aleksandr.drugalev@h-xgroup.com` / `ChangeMe123!`;
+- сотрудник `baranova`: `g.baranova@h-xgroup.com` / `Employee123!`.
+
+Они создаются только при отсутствии соответствующей учётной записи. Для общей или production-среды обязательно задайте собственные пароли. Администратор может назначать и менять пароли сотрудников в разделе «Настройки»; логином всегда служит email из справочника.
 
 ## Legacy Streamlit
 
@@ -128,8 +133,11 @@ Backend читает корневой `.env` и `backend/.env`.
 | --- | --- | --- |
 | `DATABASE_URL` | SQLAlchemy URL | SQLite в `storage/` |
 | `SECRET_KEY` | подпись JWT | только dev-значение |
-| `ADMIN_EMAIL` | первый администратор | `admin@example.com` |
+| `ADMIN_EMAIL` | email-логин администратора | `aleksandr.drugalev@h-xgroup.com` |
 | `ADMIN_PASSWORD` | пароль первого администратора | `ChangeMe123!` |
+| `ADMIN_EMPLOYEE_ID` | карточка администратора в справочнике | `drugalev` |
+| `EMPLOYEE_ID` | сотрудник для начальной учётной записи | `baranova` |
+| `EMPLOYEE_PASSWORD` | начальный пароль сотрудника | `Employee123!` |
 | `STORAGE_DIR` | uploads и результаты | `storage/` |
 | `TEMPLATES_DIR` | DOCX-шаблоны | `templates/` |
 | `LEGACY_DATA_DIR` | начальные JSON-данные | `data/` |

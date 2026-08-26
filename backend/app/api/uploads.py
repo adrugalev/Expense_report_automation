@@ -20,7 +20,7 @@ async def upload_receipt(
     file: UploadFile = File(...),
     session: Session = Depends(get_db),
     settings: Settings = Depends(get_settings),
-    user: UserRecord = Depends(require_roles("admin", "user")),
+    user: UserRecord = Depends(require_roles("admin", "employee")),
 ) -> UploadResponse:
     payload = await file.read(settings.max_upload_size + 1)
     try:
@@ -40,7 +40,7 @@ def delete_upload(
     upload_id: str,
     session: Session = Depends(get_db),
     settings: Settings = Depends(get_settings),
-    user: UserRecord = Depends(require_roles("admin", "user")),
+    user: UserRecord = Depends(require_roles("admin", "employee")),
 ) -> None:
     try:
         UploadService(session, settings).delete(upload_id, user)

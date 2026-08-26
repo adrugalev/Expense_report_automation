@@ -24,7 +24,10 @@
 - [x] Созданы `ARCHITECTURE.md` с Mermaid-диаграммами и `MIGRATION_REPORT.md` с parity matrix.
 - [x] Представительские профили и общая оркестрация вынесены из Streamlit в reusable core.
 - [x] Создан FastAPI backend с `/api/health`, OpenAPI, auth, dashboard, employees, uploads и reports.
-- [x] Реализованы Argon2 password hashes, JWT в HttpOnly cookie и роли admin/user/viewer.
+- [x] Реализованы Argon2 password hashes, JWT в HttpOnly cookie и роли admin/employee.
+- [x] Учётная запись сотрудника связана с карточкой сотрудника; employee формирует отчёты только от своего имени.
+- [x] Обзор и общая история закрыты для employee; администратор управляет паролями сотрудников в настройках.
+- [x] Администратор связан с карточкой Другалёва; логином всех ролей является email из справочника.
 - [x] Реализованы SQLAlchemy entities, SQLite/PostgreSQL configuration и начальная Alembic migration.
 - [x] Реализована безопасная загрузка PDF/PNG/JPG: extension, MIME, magic bytes, size, safe path и delete.
 - [x] Реализованы все три типа отчётов и три режима представительских документов.
@@ -41,7 +44,7 @@
 
 ## 4. В работе
 
-- Реализация и доступные на текущем host проверки завершены; backend/frontend оставлены запущенными для user acceptance.
+- Публичная demo-ссылка активна через Cloudflare Quick Tunnel; для постоянного uptime нужен named tunnel или PaaS/VPS аккаунт.
 
 ## 5. Осталось сделать
 
@@ -53,6 +56,8 @@
 - [x] Зафиксировать невозможность Docker build на текущем host без установленного Docker Engine.
 - [x] Подготовить финальный отчёт с командами запуска и известными ограничениями.
 - [ ] На host с Docker Engine выполнить production smoke: `docker compose up --build`.
+- [x] Опубликовать текущий сервис по внешней HTTPS-ссылке и проверить полный публичный маршрут.
+- [ ] Перенести сервис на постоянный URL с гарантированным uptime после предоставления hosting/domain credentials.
 
 ## 6. Архитектурные решения
 
@@ -78,25 +83,34 @@
 
 ## 8. Проверки и тесты
 
-- `python -m pytest -q` после обновления на 26.08.2026: 102 passed, 8 skipped, 1 dependency deprecation warning.
-- `python -m pytest backend/tests -q`: 9 passed.
+- `python -m pytest -q` после добавления смены пароля администратора: 105 passed, 8 skipped, 1 dependency deprecation warning.
+- `python -m pytest backend/tests -q`: 12 passed.
 - `pnpm test` после последних изменений: 5 passed.
 - `pnpm lint` после добавления generated-artifact ignores: passed без warnings.
 - `pnpm build` после последних изменений: passed; все application routes собраны, TypeScript passed.
-- `pnpm test:e2e` после последних изменений: 9 passed (desktop, tablet, mobile, full gift-report flow).
+- Публичный `pnpm test:e2e` версии 6: 18 passed (desktop, tablet, mobile, admin/employee access, форма смены пароля, смена контрагента и участников, full gift-report flow).
+- Backend role regression после добавления employee account: 10 passed; проверены смена пароля, запрет истории и формирование только за себя.
 - Playwright overflow check выявил и подтвердил исправление wide-table grid overflow.
 - UI screenshots вручную проверены на desktop/tablet/mobile; перекрытие sticky action bar исправлено.
 - Alembic initial migration применена к чистой SQLite успешно.
 - Реальный DOCX через web API: valid ZIP/DOCX, 10 paragraphs, 1 table, ожидаемые ФИО/дата/сумма.
 - DOCX visual render не выполнен: на host отсутствуют LibreOffice и Microsoft Word; structural QA пройден.
 - `docker-compose.yml` успешно разобран YAML parser; Docker build не запускался, Docker Engine отсутствует.
-- Финальный HTTP smoke: frontend `/login` = 200, proxied `/api/health` = `ok`, `/api/meta` = `Версия 1 от 26.08.2026`.
+- Финальный HTTP smoke: frontend `/login` = 200, proxied `/api/health` = `ok`, `/api/meta` = `Версия 6 от 26.08.2026`.
 - Финальный `git diff --check`: passed; legacy entrypoints и шаблоны всех трёх типов существуют.
+- Cloudflare Quick Tunnel: публичная login page = 200, auth = success, employees = 6, report generation = completed/1 DOCX.
+- Повторный внешний smoke после усиления конфигурации: health = `ok`, auth = 200, admin session = active, cookie содержит `HttpOnly`, `SameSite=Lax` и `Secure`.
+- Публичный role smoke версии 3: admin dashboard/history = 200; employee dashboard/history/accounts = 403; employee видит одну собственную карточку и успешно формирует DOCX за себя.
+- Публичный identity smoke версии 4: старый логин `admin@example.com` отклонён; `aleksandr.drugalev@h-xgroup.com` входит как администратор Другалёв с `employee_id=drugalev`; смена его пароля через управление сотрудниками заблокирована.
+- Публичный representative-autofill smoke версии 5: повторное нажатие меняет контрагента и связанных с ним участников; проверено на desktop, tablet и mobile.
+- Публичный password smoke версии 6: неверный текущий пароль отклонён; после смены старый пароль перестал работать, новый сработал; исходный рабочий пароль затем успешно восстановлен.
+- Публичный frontend переведён с `next dev` на production build, чтобы HTTPS-туннель стабильно отдавал JavaScript chunks.
+- Публичный URL работает только пока запущены локальные backend, frontend и tunnel processes; Quick Tunnel не имеет SLA.
 
 ## 9. Следующий шаг
 
-На машине с Docker Engine проверить production Compose; после user acceptance изменения готовы к commit/review.
+Публичная demo-ссылка готова к user acceptance; для постоянного адреса выбрать VPS/PaaS или предоставить Cloudflare account/domain.
 
 ## NEXT STEP
 
-На host с установленным Docker Engine создать `.env` из `.env.example`, выполнить `docker compose up --build` и проверить `http://localhost:3000`.
+Подключить постоянный hosting/domain, развернуть `docker-compose.yml` или named Cloudflare Tunnel и повторить public smoke на постоянном URL.

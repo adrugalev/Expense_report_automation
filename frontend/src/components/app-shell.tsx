@@ -12,12 +12,16 @@ import { Button } from "@/components/ui/button";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { VersionDialog } from "@/components/version-dialog";
 
-const navigation = [
+const adminNavigation = [
   { href: "/", label: "Обзор", icon: LayoutDashboard },
   { href: "/reports/new", label: "Новый отчёт", icon: FilePlus2 },
   { href: "/reports/history", label: "История", icon: FileClock },
   { href: "/employees", label: "Справочники", icon: BookUser },
   { href: "/settings", label: "Настройки", icon: Settings },
+];
+
+const employeeNavigation = [
+  { href: "/reports/new", label: "Новый отчёт", icon: FilePlus2 },
 ];
 
 export function AppShell({ children }: { children: React.ReactNode }) {
@@ -26,6 +30,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const router = useRouter();
   const queryClient = useQueryClient();
   const { data: user } = useUser();
+  const navigation = user?.role === "employee" ? employeeNavigation : adminNavigation;
   const logout = useMutation({
     mutationFn: () => apiFetch<void>("/auth/logout", { method: "POST" }),
     onSuccess: () => { queryClient.clear(); router.replace("/login"); },

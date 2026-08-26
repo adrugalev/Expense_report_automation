@@ -124,9 +124,12 @@ export function ReportForm() {
   const [uploads, setUploads] = useState<ReceiptUpload[]>([]);
   const [companyParticipants, setCompanyParticipants] = useState<string[]>([]);
   const [draftRestored, setDraftRestored] = useState(false);
+  const recentCounterparties = useRef<string[]>([]);
   const reportType = form.watch("report_type");
   const selectedEmployee = form.watch("employee_id");
   const employees = employeesQuery.data ?? [];
+  const isEmployee = user?.role === "employee";
+  const selfEmployee = employees.find((employee) => employee.id === user?.employee_id);
 
   useEffect(() => {
     try {
@@ -148,6 +151,12 @@ export function ReportForm() {
     localStorage.setItem(draftKey, JSON.stringify({ values: form.getValues(), receipts, uploads, participants: companyParticipants }));
     return () => subscription.unsubscribe();
   }, [companyParticipants, draftKey, draftRestored, form, receipts, uploads]);
+
+  useEffect(() => {
+    if (draftRestored && isEmployee && user.employee_id) {
+      form.setValue("employee_id", user.employee_id, { shouldValidate: true });
+    }
+  }, [draftRestored, form, isEmployee, user]);
 
   useEffect(() => {
     const expenseType: Receipt["expense_type"] = reportType === "business_trip" ? "такси" : reportType === "representative_expenses" ? "ресторан" : "подарки";
@@ -182,13 +191,33 @@ export function ReportForm() {
   }, []);
 
   const suggestMutation = useMutation({
-    mutationFn: () => apiFetch<{ counterparty: string; meeting_purpose: string; meeting_result: string; participants_counterparty: string[] }>("/reports/suggestions/representative", { method: "POST", body: JSON.stringify({ signature: `${form.getValues("restaurant_name")} ${form.getValues("place")}`, recent_counterparties: [], meeting_purpose: form.getValues("meeting_purpose") }) }),
+    mutationFn: () => {
+      const currentCounterparty = form.getValues("counterparty").trim();
+      if (currentCounterparty) {
+        recentCounterparties.current = [
+          ...recentCounterparties.current.filter((item) => item !== currentCounterparty),
+          currentCounterparty,
+        ].slice(-3);
+      }
+      return apiFetch<{ counterparty: string; meeting_purpose: string; meeting_result: string; participants_counterparty: string[] }>("/reports/suggestions/representative", {
+        method: "POST",
+        body: JSON.stringify({
+          signature: `${form.getValues("restaurant_name")} ${form.getValues("place")}`,
+          recent_counterparties: recentCounterparties.current,
+          meeting_purpose: form.getValues("meeting_purpose"),
+        }),
+      });
+    },
     onSuccess: (suggestion) => {
-      if (!form.getValues("counterparty")) form.setValue("counterparty", suggestion.counterparty);
+      recentCounterparties.current = [
+        ...recentCounterparties.current.filter((item) => item !== suggestion.counterparty),
+        suggestion.counterparty,
+      ].slice(-3);
+      form.setValue("counterparty", suggestion.counterparty);
       if (!form.getValues("meeting_purpose")) form.setValue("meeting_purpose", suggestion.meeting_purpose);
       if (!form.getValues("meeting_result")) form.setValue("meeting_result", suggestion.meeting_result);
-      if (!form.getValues("participants_counterparty")) form.setValue("participants_counterparty", suggestion.participants_counterparty.join("\n"));
-      toast.success("Поля дополнены");
+      form.setValue("participants_counterparty", suggestion.participants_counterparty.join("\n"));
+      toast.success("Поля дополнены новым вариантом");
     },
     onError: (error) => toast.error(error.message),
   });
@@ -206,7 +235,9 @@ export function ReportForm() {
   const total = useMemo(() => receipts.reduce((sum, receipt) => sum + (Number(receipt.amount) || 0), 0), [receipts]);
   const submit = (values: FormValues) => {
     if (!receipts.length) { toast.error("Добавьте хотя бы один чек"); return; }
-    const base = { report_type: values.report_type, employee_id: values.employee_id, report_date: values.report_date, receipts, build_mode: values.build_mode };
+    const employeeId = isEmployee ? user?.employee_id : values.employee_id;
+    if (!employeeId) { toast.error("Учётная запись не связана с сотрудником"); return; }
+    const base = { report_type: values.report_type, employee_id: employeeId, report_date: values.report_date, receipts, build_mode: values.build_mode };
     let payload: ReportPayload;
     if (values.report_type === "business_trip") payload = { ...base, report_type: "business_trip", build_mode: "single", trip_city: values.trip_city.trim(), trip_start_date: values.trip_start_date, trip_end_date: values.trip_end_date, purpose: values.purpose.trim() };
     else if (values.report_type === "representative_expenses") payload = { ...base, report_type: "representative_expenses", event_date: values.event_date, place: values.place.trim(), restaurant_name: values.restaurant_name.trim(), counterparty: values.counterparty.trim(), meeting_purpose: values.meeting_purpose.trim(), participants_company: companyParticipants, participants_counterparty: values.participants_counterparty.split("\n").map((item) => item.trim()).filter(Boolean), meeting_result: values.meeting_result.trim() };
@@ -227,7 +258,9 @@ export function ReportForm() {
       </button>; })}
     </div></section>
 
-    <section className="border-t pt-7" aria-labelledby="employee-heading"><h2 id="employee-heading" className="mb-3 text-base font-semibold">2. Сотрудник</h2><div className="max-w-2xl"><EmployeePicker employees={employees} value={selectedEmployee} onChange={(id) => form.setValue("employee_id", id, { shouldValidate: true })} error={form.formState.errors.employee_id?.message} /></div></section>
+    <section className="border-t pt-7" aria-labelledby="employee-heading"><h2 id="employee-heading" className="mb-3 text-base font-semibold">2. Сотрудник</h2><div className="max-w-2xl">
+      {isEmployee ? <div className="border-y border-border py-3"><p className="text-sm font-medium">{selfEmployee?.full_name ?? user?.full_name}</p><p className="mt-1 text-xs text-muted">{selfEmployee?.position ?? user?.email}</p></div> : <EmployeePicker employees={employees} value={selectedEmployee} onChange={(id) => form.setValue("employee_id", id, { shouldValidate: true })} error={form.formState.errors.employee_id?.message} />}
+    </div></section>
 
     <section className="border-t pt-7" aria-labelledby="receipts-heading"><div className="mb-3"><h2 id="receipts-heading" className="text-base font-semibold">3. Чеки</h2><p className="mt-1 text-sm text-muted">Загрузите сканы и проверьте распознанные значения.</p></div><FileDropzone uploads={uploads} onUploaded={receiveUpload} onRemoved={removeUpload} /><div className="mt-5"><ReceiptTable receipts={receipts} onChange={setReceipts} /></div></section>
 
@@ -266,7 +299,7 @@ export function ReportForm() {
 
     <section className="flex flex-col gap-3 border-t py-5 sm:flex-row sm:items-center sm:justify-between">
       <div className="text-sm"><span className="text-muted">Чеков:</span> <strong>{receipts.length}</strong><span className="mx-2 text-border">|</span><span className="text-muted">Итого:</span> <strong>{total.toLocaleString("ru-RU", { minimumFractionDigits: 2 })} ₽</strong></div>
-      <div className="flex gap-2"><Button type="button" variant="secondary" onClick={() => { form.reset(defaults); setReceipts([]); setUploads([]); setCompanyParticipants([]); localStorage.removeItem(draftKey); }}>Очистить</Button><Button type="submit" disabled={generateMutation.isPending || employeesQuery.isLoading}>{generateMutation.isPending ? <Loader2 className="size-4 animate-spin" /> : <FileCheck2 className="size-4" />}Сформировать документы</Button></div>
+      <div className="flex gap-2"><Button type="button" variant="secondary" onClick={() => { form.reset({ ...defaults, employee_id: isEmployee ? user?.employee_id ?? "" : "" }); setReceipts([]); setUploads([]); setCompanyParticipants([]); recentCounterparties.current = []; localStorage.removeItem(draftKey); }}>Очистить</Button><Button type="submit" disabled={generateMutation.isPending || employeesQuery.isLoading}>{generateMutation.isPending ? <Loader2 className="size-4 animate-spin" /> : <FileCheck2 className="size-4" />}Сформировать документы</Button></div>
     </section>
   </form>;
 }

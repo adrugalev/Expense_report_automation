@@ -19,6 +19,9 @@ def test_login_dashboard_and_seeded_employees(authenticated_client: TestClient) 
     me = authenticated_client.get("/api/auth/me")
     assert me.status_code == 200
     assert me.json()["role"] == "admin"
+    assert me.json()["email"] == "aleksandr.drugalev@h-xgroup.com"
+    assert me.json()["full_name"] == "Другалев Александр Александрович"
+    assert me.json()["employee_id"] == "drugalev"
 
     employees = authenticated_client.get("/api/employees")
     assert employees.status_code == 200
@@ -27,6 +30,139 @@ def test_login_dashboard_and_seeded_employees(authenticated_client: TestClient) 
     dashboard = authenticated_client.get("/api/dashboard")
     assert dashboard.status_code == 200
     assert dashboard.json()["employees_total"] == 6
+
+
+def test_admin_changes_own_password(authenticated_client: TestClient) -> None:
+    changed_password = "ChangedAdminPassword123!"
+
+    wrong_current = authenticated_client.put(
+        "/api/auth/password",
+        json={"current_password": "WrongPassword123!", "new_password": changed_password},
+    )
+    assert wrong_current.status_code == 400
+    assert "Текущий пароль" in wrong_current.json()["detail"]
+
+    same_password = authenticated_client.put(
+        "/api/auth/password",
+        json={"current_password": "TestPassword123!", "new_password": "TestPassword123!"},
+    )
+    assert same_password.status_code == 400
+
+    changed = authenticated_client.put(
+        "/api/auth/password",
+        json={"current_password": "TestPassword123!", "new_password": changed_password},
+    )
+    assert changed.status_code == 204
+
+    assert authenticated_client.post("/api/auth/logout").status_code == 204
+    old_login = authenticated_client.post(
+        "/api/auth/login",
+        json={"email": "aleksandr.drugalev@h-xgroup.com", "password": "TestPassword123!"},
+    )
+    assert old_login.status_code == 401
+    new_login = authenticated_client.post(
+        "/api/auth/login",
+        json={"email": "aleksandr.drugalev@h-xgroup.com", "password": changed_password},
+    )
+    assert new_login.status_code == 200
+
+    restored = authenticated_client.put(
+        "/api/auth/password",
+        json={"current_password": changed_password, "new_password": "TestPassword123!"},
+    )
+    assert restored.status_code == 204
+
+
+def test_admin_manages_employee_password_and_employee_access_is_restricted(
+    authenticated_client: TestClient,
+) -> None:
+    employees = authenticated_client.get("/api/employees").json()
+    own_employee = next(item for item in employees if item["id"] == "baranova")
+    other_employee = next(item for item in employees if item["id"] != "baranova")
+
+    accounts = authenticated_client.get("/api/accounts/employees")
+    assert accounts.status_code == 200
+    admin_account = next(item for item in accounts.json() if item["employee_id"] == "drugalev")
+    assert admin_account["role"] == "admin"
+    assert authenticated_client.put(
+        "/api/accounts/employees/drugalev/password",
+        json={"password": "MustNotReplaceAdmin123!"},
+    ).status_code == 409
+    own_account = next(item for item in accounts.json() if item["employee_id"] == "baranova")
+    assert own_account["role"] == "employee"
+    assert own_account["has_account"] is True
+    assert own_account["email"] == own_employee["email"]
+
+    changed_password = "ChangedEmployee123!"
+    reset = authenticated_client.put(
+        "/api/accounts/employees/baranova/password",
+        json={"password": changed_password},
+    )
+    assert reset.status_code == 200
+    assert reset.json()["has_account"] is True
+
+    assert authenticated_client.post("/api/auth/logout").status_code == 204
+    login = authenticated_client.post(
+        "/api/auth/login",
+        json={"email": own_employee["email"], "password": changed_password},
+    )
+    assert login.status_code == 200
+    assert login.json()["user"]["role"] == "employee"
+    assert login.json()["user"]["employee_id"] == "baranova"
+
+    assert authenticated_client.get("/api/dashboard").status_code == 403
+    assert authenticated_client.get("/api/reports").status_code == 403
+    assert authenticated_client.get("/api/accounts/employees").status_code == 403
+    visible_employees = authenticated_client.get("/api/employees")
+    assert visible_employees.status_code == 200
+    assert [item["id"] for item in visible_employees.json()] == ["baranova"]
+
+    report_date = date.today().isoformat()
+    base_request = {
+        "report_type": "gifts",
+        "report_date": report_date,
+        "receipts": [{
+            "file_name": "employee-gift.pdf",
+            "date": report_date,
+            "seller": "Подарочный магазин",
+            "amount": "500.00",
+            "expense_type": "подарки",
+        }],
+        "purchase_date": report_date,
+        "gift_name": "подарочная продукция",
+        "gift_quantity": 1,
+        "unit_price": "500.00",
+        "recipients": [],
+        "counterparty": "Подарки",
+        "occasion": "",
+        "purpose": "Укрепление деловых отношений",
+        "build_mode": "single",
+    }
+    forbidden = authenticated_client.post(
+        "/api/reports/generate",
+        json={**base_request, "employee_id": other_employee["id"]},
+    )
+    assert forbidden.status_code == 403
+    assert "только для себя" in forbidden.json()["detail"]
+
+    generated = authenticated_client.post(
+        "/api/reports/generate",
+        json={**base_request, "employee_id": "baranova"},
+    )
+    assert generated.status_code == 201, generated.text
+    report = generated.json()
+    assert report["employee_id"] == "baranova"
+    assert authenticated_client.get(f"/api/reports/{report['id']}").status_code == 200
+
+    assert authenticated_client.post("/api/auth/logout").status_code == 204
+    admin_login = authenticated_client.post(
+        "/api/auth/login",
+        json={"email": "aleksandr.drugalev@h-xgroup.com", "password": "TestPassword123!"},
+    )
+    assert admin_login.status_code == 200
+    history = authenticated_client.get("/api/reports")
+    assert history.status_code == 200
+    assert any(item["id"] == report["id"] for item in history.json()["items"])
 
 
 def test_employee_crud(authenticated_client: TestClient) -> None:
@@ -53,6 +189,31 @@ def test_employee_crud(authenticated_client: TestClient) -> None:
 
     delete = authenticated_client.delete("/api/employees/web-test-user")
     assert delete.status_code == 204
+
+
+def test_representative_suggestions_rotate_counterparties_and_participants(
+    authenticated_client: TestClient,
+) -> None:
+    recent: list[str] = []
+    previous_participants: list[str] | None = None
+
+    for _ in range(5):
+        response = authenticated_client.post(
+            "/api/reports/suggestions/representative",
+            json={
+                "signature": "Ресторан Тест Москва",
+                "recent_counterparties": recent[-3:],
+                "meeting_purpose": "",
+            },
+        )
+        assert response.status_code == 200
+        suggestion = response.json()
+        assert suggestion["counterparty"] not in recent[-3:]
+        assert suggestion["participants_counterparty"]
+        if previous_participants is not None:
+            assert suggestion["participants_counterparty"] != previous_participants
+        recent.append(suggestion["counterparty"])
+        previous_participants = suggestion["participants_counterparty"]
 
 
 def test_upload_rejects_fake_pdf(authenticated_client: TestClient) -> None:

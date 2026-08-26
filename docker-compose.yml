@@ -23,9 +23,12 @@ services:
       ENVIRONMENT: production
       DATABASE_URL: postgresql+psycopg://expense_app:${POSTGRES_PASSWORD:-change-me-db-password}@db:5432/expense_reports
       SECRET_KEY: ${SECRET_KEY:-change-this-secret-before-production}
-      ADMIN_EMAIL: ${ADMIN_EMAIL:-admin@example.com}
+      ADMIN_EMAIL: ${ADMIN_EMAIL:-aleksandr.drugalev@h-xgroup.com}
       ADMIN_PASSWORD: ${ADMIN_PASSWORD:-ChangeMe123!}
-      ADMIN_NAME: ${ADMIN_NAME:-Администратор}
+      ADMIN_NAME: ${ADMIN_NAME:-Другалев Александр Александрович}
+      ADMIN_EMPLOYEE_ID: ${ADMIN_EMPLOYEE_ID:-drugalev}
+      EMPLOYEE_ID: ${EMPLOYEE_ID:-baranova}
+      EMPLOYEE_PASSWORD: ${EMPLOYEE_PASSWORD:-Employee123!}
       COOKIE_SECURE: ${COOKIE_SECURE:-false}
       TRUSTED_HOSTS: localhost,127.0.0.1,backend
       ALLOWED_ORIGINS: http://localhost:3000
