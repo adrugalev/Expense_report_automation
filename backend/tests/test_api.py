@@ -196,6 +196,8 @@ def test_representative_suggestions_rotate_counterparties_and_participants(
 ) -> None:
     recent: list[str] = []
     previous_participants: list[str] | None = None
+    previous_purpose: str | None = None
+    previous_result: str | None = None
 
     for _ in range(5):
         response = authenticated_client.post(
@@ -210,10 +212,15 @@ def test_representative_suggestions_rotate_counterparties_and_participants(
         suggestion = response.json()
         assert suggestion["counterparty"] not in recent[-3:]
         assert suggestion["participants_counterparty"]
+        assert "\u043b\u0438\u0444\u0442" in suggestion["meeting_purpose"].lower()
         if previous_participants is not None:
             assert suggestion["participants_counterparty"] != previous_participants
+            assert suggestion["meeting_purpose"] != previous_purpose
+            assert suggestion["meeting_result"] != previous_result
         recent.append(suggestion["counterparty"])
         previous_participants = suggestion["participants_counterparty"]
+        previous_purpose = suggestion["meeting_purpose"]
+        previous_result = suggestion["meeting_result"]
 
 
 def test_upload_rejects_fake_pdf(authenticated_client: TestClient) -> None:

@@ -7,7 +7,6 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         libgl1 libglib2.0-0 libzbar0 poppler-utils \
-        tesseract-ocr tesseract-ocr-eng tesseract-ocr-rus \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
@@ -20,6 +19,7 @@ COPY backend /app/backend
 COPY src /app/src
 COPY data /app/data
 COPY templates /app/templates
+COPY vendor /app/vendor
 
 RUN mkdir -p /app/storage/uploads /app/storage/reports \
     && useradd --create-home --uid 10001 appuser \

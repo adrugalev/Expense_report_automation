@@ -17,4 +17,5 @@ frontend/test-results/
 frontend/coverage/
 .coverage
 coverage.xml
+tmp/
 

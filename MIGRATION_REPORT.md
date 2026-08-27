@@ -30,7 +30,7 @@
 | Выбор сотрудника | Да | Admin: поиск; employee: только собственная карточка | `GET /api/employees` | Improved |
 | Справочник сотрудников | JSON | CRUD + БД | `/api/employees` | Improved |
 | Загрузка PDF/JPG/PNG | Да | Drag & drop, статусы, удаление | `/api/uploads` | Improved |
-| OCR русского текста | Сервер Streamlit | Сервер FastAPI/Docker | Upload service | Improved |
+| OCR русского текста | Сервер PaddleOCR | Сервер FastAPI/Docker | Upload service | Improved |
 | Проверка MIME/magic/размера | Частично | Да | Upload service | Improved |
 | Редактирование чеков | Да | Да, TanStack Table | Typed report payload | Migrated |
 | Ручная строка чека | Да | Да | Typed report payload | Migrated |
@@ -46,7 +46,7 @@
 | Light/Dark/System | Нет | Да | Frontend | Improved |
 | Mobile/tablet UI | Ограниченно | Да | Frontend | Improved |
 | Загрузка DOCX-шаблонов из UI | Фактически отсутствует | Нет | Нет | Legacy documentation only |
-| Установка OCR кнопкой | Да | Не нужна в Docker | Нет | Deprecated in web |
+| Установка OCR кнопкой | Нет | Не нужна в Docker | Нет | Removed |
 
 ## Improved
 
@@ -57,7 +57,7 @@
 - Файлы изолированы по пользователю/отчёту, имена и пути проверяются.
 - Обзор и общая история доступны только администратору; employee account не может сформировать отчёт за другого сотрудника даже прямым API-запросом.
 - Администратор связан с карточкой Другалёва; email из справочника является логином для обеих ролей.
-- OCR выполняется централизованно с `rus+eng`, установка на клиентских компьютерах не требуется.
+- OCR выполняется централизованно через русскую модель PaddleOCR PP-OCRv5; установка на клиентских компьютерах не требуется.
 - Ошибки API структурированы, frontend показывает inline validation, loading/empty/error states и краткие toast-сообщения.
 
 ## Pending
@@ -72,7 +72,7 @@
 
 - Web-версия хранит сотрудников в БД после первоначального импорта; изменение `data/employees.json` не перезаписывает существующую БД.
 - Web-версия хранит generated files в `STORAGE_DIR`, legacy — в `output/`.
-- Runtime-кнопка установки OCR отсутствует: production image уже содержит OCR и системные пакеты.
+- Runtime-кнопка установки OCR отсутствует: production image уже содержит PaddleOCR и локальные модели.
 - Ручной ввод остаётся доступным, если исходный скан не позволяет надёжно распознать отдельные поля.
 
 ## Verification

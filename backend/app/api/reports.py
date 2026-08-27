@@ -62,7 +62,7 @@ def representative_suggestion(
     completed = complete_representative_fields(
         {
             "counterparty": "",
-            "meeting_purpose": data.meeting_purpose,
+            "meeting_purpose": "",
             "meeting_result": "",
             "participants_counterparty": [],
         },

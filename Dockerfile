@@ -33,7 +33,6 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         libgl1 libglib2.0-0 libzbar0 poppler-utils \
-        tesseract-ocr tesseract-ocr-eng tesseract-ocr-rus \
     && rm -rf /var/lib/apt/lists/*
 
 COPY --from=node:22-bookworm-slim /usr/local/bin/node /usr/local/bin/node
@@ -48,6 +47,7 @@ COPY backend /app/backend
 COPY src /app/src
 COPY data /app/data
 COPY templates /app/templates
+COPY vendor /app/vendor
 COPY --from=frontend-builder /build/frontend/.next/standalone /app/frontend
 COPY --from=frontend-builder /build/frontend/.next/static /app/frontend/.next/static
 COPY --from=frontend-builder /build/frontend/public /app/frontend/public

@@ -21,7 +21,7 @@ export default function LoginPage() {
   const form = useForm<FormData>({ resolver: zodResolver(schema), defaultValues: { email: "", password: "" } });
   const login = useMutation({
     mutationFn: (values: FormData) => apiFetch<{ user: User }>("/auth/login", { method: "POST", body: JSON.stringify(values) }),
-    onSuccess: (data) => { queryClient.setQueryData(["current-user"], data.user); router.replace(data.user.role === "admin" ? "/" : "/reports/new"); },
+    onSuccess: (data) => { queryClient.setQueryData(["current-user"], data.user); router.replace("/reports/new"); },
   });
   return (
     <main className="grid min-h-screen place-items-center bg-background px-4 py-10">

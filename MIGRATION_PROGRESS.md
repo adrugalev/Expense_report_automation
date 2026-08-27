@@ -36,7 +36,7 @@
 - [x] Реализованы searchable employee picker, drag-and-drop, editable receipt table и per-user browser draft.
 - [x] Реализованы light/dark/system theme, skeleton/empty/error states, toasts и confirmation dialog.
 - [x] Созданы backend/frontend Dockerfiles, `docker-compose.yml`, healthchecks и `.env.example`.
-- [x] OCR/Tesseract `rus+eng`, Poppler и ZBar включены в backend Docker image.
+- [x] PaddleOCR PP-OCRv5 для русского текста, локальные модели, Poppler и ZBar включены в backend Docker image.
 - [x] README обновлён для web, legacy, Docker, development, tests и Linux VPS.
 - [x] Backend/API regression tests охватывают auth, CRUD, uploads, DOCX/ZIP и все типы/режимы отчётов.
 - [x] Vitest и Playwright tests добавлены; Playwright проверяет desktop/tablet/mobile и generation flow.
@@ -68,8 +68,8 @@
 - Файлы не хранятся в БД: БД содержит metadata, `STORAGE_DIR` — uploads/results.
 - Next.js проксирует `/api/*`, поэтому browser работает same-origin и HttpOnly cookie не требует JS-доступа.
 - Для online deployment добавлена минимальная authentication; роли заложены в model/API guards без избыточного RBAC.
-- OCR централизован на backend; клиентским компьютерам не требуются Python/Tesseract.
-- Runtime-установка OCR сохранена только в legacy; Docker image содержит зависимости заранее.
+- OCR централизован на backend; клиентским компьютерам не требуются Python и OCR-программы.
+- PaddleOCR runtime и модели включены в Docker image заранее; runtime-установка из интерфейса удалена.
 - Черновики разделены по user id в localStorage, чтобы пользователи одного браузера не видели общий draft.
 - Синхронный Python generator выполняется через FastAPI thread pool; отдельная очередь не добавлена для текущих объёмов.
 
@@ -88,7 +88,7 @@
 - `pnpm test` после последних изменений: 5 passed.
 - `pnpm lint` после добавления generated-artifact ignores: passed без warnings.
 - `pnpm build` после последних изменений: passed; все application routes собраны, TypeScript passed.
-- Публичный `pnpm test:e2e` версии 6: 18 passed (desktop, tablet, mobile, admin/employee access, форма смены пароля, смена контрагента и участников, full gift-report flow).
+- Публичный `pnpm test:e2e` версии 8: 18 passed (desktop, tablet, mobile, пустые цель/результат до нажатия «Я — Джон Сноу», ротация контрагентов и full gift-report flow).
 - Backend role regression после добавления employee account: 10 passed; проверены смена пароля, запрет истории и формирование только за себя.
 - Playwright overflow check выявил и подтвердил исправление wide-table grid overflow.
 - UI screenshots вручную проверены на desktop/tablet/mobile; перекрытие sticky action bar исправлено.
@@ -96,7 +96,7 @@
 - Реальный DOCX через web API: valid ZIP/DOCX, 10 paragraphs, 1 table, ожидаемые ФИО/дата/сумма.
 - DOCX visual render не выполнен: на host отсутствуют LibreOffice и Microsoft Word; structural QA пройден.
 - `docker-compose.yml` успешно разобран YAML parser; Docker build не запускался, Docker Engine отсутствует.
-- Финальный HTTP smoke: frontend `/login` = 200, proxied `/api/health` = `ok`, `/api/meta` = `Версия 6 от 26.08.2026`.
+- Финальный HTTP smoke: frontend `/login` = 200, proxied `/api/health` = `ok`, `/api/meta` = `Версия 11 от 26.08.2026`.
 - Финальный `git diff --check`: passed; legacy entrypoints и шаблоны всех трёх типов существуют.
 - Cloudflare Quick Tunnel: публичная login page = 200, auth = success, employees = 6, report generation = completed/1 DOCX.
 - Повторный внешний smoke после усиления конфигурации: health = `ok`, auth = 200, admin session = active, cookie содержит `HttpOnly`, `SameSite=Lax` и `Secure`.
@@ -104,6 +104,10 @@
 - Публичный identity smoke версии 4: старый логин `admin@example.com` отклонён; `aleksandr.drugalev@h-xgroup.com` входит как администратор Другалёв с `employee_id=drugalev`; смена его пароля через управление сотрудниками заблокирована.
 - Публичный representative-autofill smoke версии 5: повторное нажатие меняет контрагента и связанных с ним участников; проверено на desktop, tablet и mobile.
 - Публичный password smoke версии 6: неверный текущий пароль отклонён; после смены старый пароль перестал работать, новый сработал; исходный рабочий пароль затем успешно восстановлен.
+- Публичный form smoke версии 8: кнопка называется «Я — Джон Сноу»; цель и результат встречи пусты до нажатия и заполняются только после него.
+- Публичный representative smoke версии 9: на desktop, tablet и mobile при смене контрагента меняются цель, результат и участники; textarea раскрываются до полной высоты без внутренней прокрутки.
+- Публичный navigation smoke версии 10: `/` перенаправляет на `/reports/new`; «Обзор» отсутствует; название «Автоматизация отчётных документов» помещается в desktop, tablet и mobile sidebar.
+- Публичный receipt-table smoke версии 11: до и после добавления строки горизонтальный overflow равен `0`; desktop использует компактную таблицу, tablet/mobile — вертикальную сетку полей.
 - Публичный frontend переведён с `next dev` на production build, чтобы HTTPS-туннель стабильно отдавал JavaScript chunks.
 - Публичный URL работает только пока запущены локальные backend, frontend и tunnel processes; Quick Tunnel не имеет SLA.
 

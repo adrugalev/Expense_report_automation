@@ -24,7 +24,7 @@ Expense_report_automation/
 |   `-- utils.py                   # безопасные части имен и уникальные пути
 |-- data/
 |   |-- employees.json             # шесть сотрудников
-|   `-- tessdata/                   # rus/eng language data for Tesseract
+|-- vendor/paddleocr/               # автономные PP-OCRv5 detection/recognition models
 |-- templates/
 |   |-- business_trip/
 |   |-- representative_expenses/
@@ -79,7 +79,7 @@ Expense_report_automation/
 ```text
 Streamlit app.py
   -> EmployeeDirectory -> Employee + approval rules
-  -> receipt_parser -> QR / PDF text / Tesseract / RapidOCR / address lookup
+  -> receipt_parser -> QR / PDF text / PaddleOCR / address lookup
   -> Pydantic report models
   -> report builders -> formatters + templates + python-docx/docxtpl
   -> filesystem output
@@ -115,7 +115,7 @@ Streamlit app.py
 
 ## Ограничения и риски миграции
 
-- Runtime-установка OCR меняет Python-окружение и удаляет OpenCV-пакеты во время работы приложения. В production OCR должен устанавливаться при сборке образа.
+- PaddleOCR требует больше памяти, поэтому используется mobile-detector и OCR только информативных зон длинного чека.
 - Nominatim вызывается синхронно, без серверного rate limit и долговременного кэша.
 - Legacy upload не проверяет реальный MIME, сигнатуру и размер файла.
 - JSON-справочник не рассчитан на конкурентную запись несколькими пользователями.

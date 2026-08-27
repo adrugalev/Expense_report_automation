@@ -23,6 +23,10 @@ ANTTEQ_GIFT_RECEIPT_PATHS = (
     LOCAL_SCAN_DIR / "check_podarki_antteq.pdf",
     Path("D:/Dropbox/Сканы/check_podarki_antteq.pdf"),
 )
+AKVILON_RECEIPT_PATHS = (
+    LOCAL_SCAN_DIR / "check_cafe_akvilon.pdf",
+    Path("D:/Dropbox/Сканы/check_cafe_akvilon.pdf"),
+)
 
 
 def test_extract_restaurant_name_and_address_from_ooo_receipt_text():
@@ -321,6 +325,16 @@ def test_extract_address_ignores_rule_payment_garbage():
     assert extract_address("г ва . OO") is None
 
 
+def test_extract_legacy_kkt_inn_misread_as_latin_hhh():
+    assert extract_inn("KKM 00201148 HHH 007731414200 #5606") == "7731414200"
+    assert extract_inn("KKM 00055114 HHH 007701551746 25.10.12") == "7701551746"
+
+
+def test_extract_compact_legacy_addresses_without_city_prefix():
+    assert extract_address("Красная площааь д. 3") == "Красная площадь, д. 3"
+    assert extract_address("Кривоколенный пер. д. 3, стр. 1") == "Кривоколенный пер., д. 3, стр. 1"
+
+
 def test_extract_amount_and_fiscal_document_from_requisites_ocr_text():
     text = """
     UTOIr _ 1728 -00
@@ -339,7 +353,7 @@ def test_extract_amount_and_fiscal_document_from_requisites_ocr_text():
     assert extract_fiscal_drive_number(text) == "7384440900633591"
 
 
-def test_extract_amount_and_fiscal_fields_from_rapidocr_numeric_text():
+def test_extract_amount_and_fiscal_fields_from_noisy_ocr_numeric_text():
     text = """
     CUMMA:
     19520.96 RUB
@@ -358,6 +372,73 @@ def test_extract_amount_and_fiscal_fields_from_rapidocr_numeric_text():
     assert extract_fiscal_document_number(text) == "18724"
     assert extract_fiscal_drive_number(text) == "7384440901089947"
     assert extract_fiscal_sign(text) == "1110319379"
+
+
+def test_extract_fields_from_paddleocr_akvilon_text():
+    text = """
+    Кассовый чек
+    ИТОГ
+    =19810.00
+    БЕЗНАЛИЧНЫМИ
+    ООО "ЛОНСИН"
+    127030. Г. МОСКВА. УЛ СУЩЕВСКАЯ. Д. 27 СТР. 2
+    Юаньян
+    ЗН ККТ 00109525884943
+    РН ККТ 0009186509030174
+    ИНН 9701304229
+    H 7384440900636319
+    ФД 2350
+    1643941244
+    ПРИХОД
+    23.10.25 16:32
+    """
+
+    assert extract_seller(text) == "Юаньян"
+    assert extract_address(text) == "г. Москва, ул. Сущевская, д. 27 стр. 2"
+    assert extract_date(text) == date(2025, 10, 23)
+    assert extract_inn(text) == "9701304229"
+    assert extract_amount(text) == Decimal("19810.00")
+    assert extract_fiscal_document_number(text) == "2350"
+    assert extract_fiscal_drive_number(text) == "7384440900636319"
+    assert extract_fiscal_sign(text) == "1643941244"
+
+
+def test_extract_seller_before_settlement_label_when_next_line_is_fiscal_noise():
+    text = """
+    ООО "ПРИМЕР"
+    Кафе Аквилон
+    Место расчетов
+    3н KKт 00109525884943
+    """
+
+    assert extract_seller(text) == "Кафе Аквилон"
+
+
+def test_paddleocr_uses_informative_zones_of_long_receipt(monkeypatch):
+    from PIL import Image
+
+    import src.receipt_parser as parser
+
+    captured = {}
+
+    class FakePaddleOcr:
+        def predict(self, image, **kwargs):
+            captured["shape"] = image.shape
+            captured["kwargs"] = kwargs
+            return [
+                {
+                    "rec_texts": ["ИТОГ", "19810.00", "ненадёжная строка"],
+                    "rec_scores": [0.99, 0.98, 0.1],
+                }
+            ]
+
+    monkeypatch.setattr(parser, "_paddleocr_engine", lambda: FakePaddleOcr())
+
+    text = parser._try_paddleocr_pil_image(Image.new("RGB", (100, 400), "white"))
+
+    assert text == "ИТОГ\n19810.00"
+    assert captured["shape"] == (224, 100, 3)
+    assert captured["kwargs"] == {"text_det_limit_side_len": 1600, "text_det_limit_type": "max"}
 
 
 def test_extract_fiscal_drive_number_ignores_leading_ocr_digit():
@@ -385,19 +466,23 @@ def test_receipt_from_table_row_preserves_address():
 
 
 @pytest.mark.skipif(
-    not (LOCAL_SCAN_DIR / "check_cafe_akvilon.pdf").exists(),
+    not any(path.exists() for path in AKVILON_RECEIPT_PATHS),
     reason="local restaurant receipt fixture is unavailable",
 )
 def test_parse_akvilon_restaurant_receipt_pdf():
     from src.receipt_parser import parse_receipt_path
 
-    receipt = parse_receipt_path(LOCAL_SCAN_DIR / "check_cafe_akvilon.pdf")
+    receipt_path = next(path for path in AKVILON_RECEIPT_PATHS if path.exists())
+    receipt = parse_receipt_path(receipt_path)
 
     assert receipt.seller == "Юаньян"
     assert receipt.address == "г. Москва, ул. Сущевская, д. 27 стр. 2"
     assert receipt.date == date(2025, 10, 23)
     assert receipt.amount == Decimal("19810.00")
+    assert receipt.inn == "9701304229"
     assert receipt.fiscal_document_number == "2350"
+    assert receipt.fiscal_drive_number == "7384440900636319"
+    assert receipt.fiscal_sign == "1643941244"
 
 
 @pytest.mark.skipif(
@@ -522,7 +607,7 @@ def test_parse_the_pivo_receipt_pdf():
     not any(path.exists() for path in ANTTEQ_GIFT_RECEIPT_PATHS),
     reason="local Antteq gift receipt fixture is unavailable",
 )
-def test_parse_antteq_gift_receipt_pdf_without_tesseract():
+def test_parse_antteq_gift_receipt_pdf_with_server_ocr():
     from src.receipt_parser import parse_receipt_path
 
     receipt_path = next(path for path in ANTTEQ_GIFT_RECEIPT_PATHS if path.exists())

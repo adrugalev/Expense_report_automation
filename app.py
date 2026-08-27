@@ -16,7 +16,7 @@ from src.employee_directory import EmployeeDirectory
 from pydantic import ValidationError
 
 from src.models import BusinessTripReport, GiftExpenseReport, Receipt, RepresentativeExpenseReport
-from src.receipt_parser import ensure_builtin_ocr_runtime, ocr_runtime_status, parse_receipt_file, receipt_from_table_row
+from src.receipt_parser import ocr_runtime_status, parse_receipt_file, receipt_from_table_row
 from src.representative_autofill import (
     REPRESENTATIVE_AUTOFILL_PROFILES,
     complete_representative_fields,
@@ -337,18 +337,6 @@ def _receipt_editor(receipt_files, report_type: str) -> list[Receipt]:
                 st.write(f"Python: `{sys.version.split()[0]}`")
                 st.write(f"Путь: `{sys.executable}`")
                 st.write(f"OCR: {status.message}")
-                install_error = st.session_state.get("_receipt_ocr_install_error")
-                if install_error:
-                    st.write(f"Последняя ошибка установки: {install_error}")
-            if st.button("Установить OCR для сканов", type="secondary", key="install_receipt_ocr_after_warning"):
-                with st.spinner("Устанавливаю встроенное распознавание чеков..."):
-                    status = ensure_builtin_ocr_runtime()
-                if status.available:
-                    st.session_state.pop("_receipt_parse_cache", None)
-                    st.success(f"OCR для сканов готов: {status.engine}")
-                    st.rerun()
-                st.session_state["_receipt_ocr_install_error"] = status.message
-                st.error(status.message)
     frame = pd.DataFrame(
         [
             {
@@ -409,16 +397,7 @@ def _ensure_ocr_runtime_for_uploads(receipt_files) -> None:
     status = ocr_runtime_status()
     if status.available:
         return
-
-    if not st.session_state.get("_receipt_ocr_install_attempted"):
-        with st.spinner("Подготавливаю встроенное распознавание чеков..."):
-            status = ensure_builtin_ocr_runtime()
-        st.session_state["_receipt_ocr_install_attempted"] = True
-        if status.available:
-            st.session_state.pop("_receipt_parse_cache", None)
-            st.success(f"OCR для сканов готов: {status.engine}")
-            st.rerun()
-        st.session_state["_receipt_ocr_install_error"] = status.message
+    st.error(status.message)
 
 
 def _parse_uploaded_receipt_cached(uploaded) -> Receipt:

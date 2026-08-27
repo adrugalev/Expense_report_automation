@@ -13,6 +13,7 @@ import { ReceiptTable } from "@/components/receipt-table";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { apiFetch } from "@/lib/api";
 import { useUser } from "@/hooks/use-user";
 import type { Employee, Receipt, ReceiptUpload, ReportDetail, ReportPayload, ReportTypeOption } from "@/lib/types";
@@ -20,7 +21,7 @@ import { cn } from "@/lib/utils";
 
 const today = () => new Date().toISOString().slice(0, 10);
 const giftPurpose = "Создание долгосрочных деловых отношений, укрепление связей с ключевыми клиентами и деловыми партнёрами и формирование корпоративного имиджа и деловой репутации";
-const draftKeyPrefix = "expense-report-draft-v1";
+const draftKeyPrefix = "expense-report-draft-v2";
 
 const schema = z.object({
   report_type: z.enum(["business_trip", "representative_expenses", "gifts"]),
@@ -204,7 +205,6 @@ export function ReportForm() {
         body: JSON.stringify({
           signature: `${form.getValues("restaurant_name")} ${form.getValues("place")}`,
           recent_counterparties: recentCounterparties.current,
-          meeting_purpose: form.getValues("meeting_purpose"),
         }),
       });
     },
@@ -214,8 +214,8 @@ export function ReportForm() {
         suggestion.counterparty,
       ].slice(-3);
       form.setValue("counterparty", suggestion.counterparty);
-      if (!form.getValues("meeting_purpose")) form.setValue("meeting_purpose", suggestion.meeting_purpose);
-      if (!form.getValues("meeting_result")) form.setValue("meeting_result", suggestion.meeting_result);
+      form.setValue("meeting_purpose", suggestion.meeting_purpose);
+      form.setValue("meeting_result", suggestion.meeting_result);
       form.setValue("participants_counterparty", suggestion.participants_counterparty.join("\n"));
       toast.success("Поля дополнены новым вариантом");
     },
@@ -270,7 +270,7 @@ export function ReportForm() {
         <Field label="Дата составления документов" error={form.formState.errors.report_date?.message}><Input type="date" {...form.register("report_date")} /></Field>
         <Field label="Дата начала командировки" error={form.formState.errors.trip_start_date?.message}><Input type="date" {...form.register("trip_start_date")} /></Field>
         <Field label="Дата окончания командировки" error={form.formState.errors.trip_end_date?.message}><Input type="date" {...form.register("trip_end_date")} /></Field>
-        <Field label="Цель поездки *" className="sm:col-span-2" error={form.formState.errors.purpose?.message}><Textarea {...form.register("purpose")} /></Field>
+        <Field label="Цель поездки *" className="sm:col-span-2" error={form.formState.errors.purpose?.message}><Textarea {...form.register("purpose")} value={form.watch("purpose")} /></Field>
       </div> : null}
 
       {reportType === "representative_expenses" ? <div className="grid max-w-5xl gap-x-8 gap-y-4 lg:grid-cols-2">
@@ -280,21 +280,28 @@ export function ReportForm() {
           <Field label="Место проведения"><Input {...form.register("place")} placeholder="Адрес заведения" /></Field>
           <Field label="Название ресторана / кафе"><Input {...form.register("restaurant_name")} /></Field>
           <Field label="Контрагент / организация"><Input {...form.register("counterparty")} /></Field>
-          <Field label="Цель встречи"><Textarea {...form.register("meeting_purpose")} /></Field>
-          <Field label="Результат встречи"><Textarea {...form.register("meeting_result")} /></Field>
+          <Field label="Цель встречи"><Textarea {...form.register("meeting_purpose")} value={form.watch("meeting_purpose")} /></Field>
+          <Field label="Результат встречи"><Textarea {...form.register("meeting_result")} value={form.watch("meeting_result")} /></Field>
         </div>
         <div className="space-y-5">
           <fieldset><legend className="text-sm font-medium">Участники со стороны компании</legend><div className="mt-2 space-y-1 rounded-lg border p-2">{employees.map((employee) => <label key={employee.id} className="flex cursor-pointer items-start gap-2 rounded-md px-2 py-2 text-sm hover:bg-surface-muted"><input type="checkbox" className="mt-0.5 size-4 accent-primary" checked={companyParticipants.includes(employee.full_name)} onChange={(event) => setCompanyParticipants((current) => event.target.checked ? [...current, employee.full_name] : current.filter((name) => name !== employee.full_name))} /><span><span className="block font-medium">{employee.full_name}</span><span className="text-xs text-muted">{employee.position}</span></span></label>)}</div></fieldset>
-          <Field label="Участники со стороны контрагента"><Textarea {...form.register("participants_counterparty")} placeholder="По одному участнику на строку" /></Field>
+          <Field label="Участники со стороны контрагента"><Textarea {...form.register("participants_counterparty")} value={form.watch("participants_counterparty")} placeholder="По одному участнику на строку" /></Field>
           <Field label="Способ формирования"><select {...form.register("build_mode")} className="h-10 w-full rounded-md border bg-surface px-3 text-sm"><option value="single">Один документ по всем чекам</option><option value="per_receipt">Отдельный документ на каждый чек</option><option value="per_receipt_different_companies">Отдельно по чекам и организациям</option></select></Field>
-          <Button type="button" variant="secondary" onClick={() => suggestMutation.mutate()} disabled={suggestMutation.isPending}><Sparkles className="size-4" />Дополнить пустые поля</Button>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button type="button" variant="secondary" onClick={() => suggestMutation.mutate()} disabled={suggestMutation.isPending}><Sparkles className="size-4" />Я — Джон Сноу</Button>
+            </TooltipTrigger>
+            <TooltipContent side="top">
+              Автоматически подставляет контрагента, участников с его стороны, цель и результат встречи, когда вы не знаете, что указать. You know nothing, John Snow.
+            </TooltipContent>
+          </Tooltip>
         </div>
       </div> : null}
 
       {reportType === "gifts" ? <div className="max-w-3xl space-y-4"><div className="grid gap-4 sm:grid-cols-2">
         <Field label="Дата покупки" error={form.formState.errors.purchase_date?.message}><Input type="date" {...form.register("purchase_date")} /></Field>
         <Field label="Дата составления документов" error={form.formState.errors.report_date?.message}><Input type="date" {...form.register("report_date")} /></Field>
-      </div><Field label="Цель расходов" error={form.formState.errors.purpose?.message}><Textarea className="min-h-28" {...form.register("purpose")} /></Field></div> : null}
+      </div><Field label="Цель расходов" error={form.formState.errors.purpose?.message}><Textarea className="min-h-28" {...form.register("purpose")} value={form.watch("purpose")} /></Field></div> : null}
     </section>
 
     <section className="flex flex-col gap-3 border-t py-5 sm:flex-row sm:items-center sm:justify-between">

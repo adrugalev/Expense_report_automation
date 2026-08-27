@@ -1,7 +1,8 @@
 "use client";
 
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { BookUser, FileClock, FilePlus2, LayoutDashboard, LogOut, Menu, Settings, X } from "lucide-react";
+import { BookUser, FileClock, FilePlus2, LogOut, Menu, Settings, X } from "lucide-react";
+import Image from "next/image";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useState } from "react";
@@ -13,7 +14,6 @@ import { ThemeToggle } from "@/components/theme-toggle";
 import { VersionDialog } from "@/components/version-dialog";
 
 const adminNavigation = [
-  { href: "/", label: "Обзор", icon: LayoutDashboard },
   { href: "/reports/new", label: "Новый отчёт", icon: FilePlus2 },
   { href: "/reports/history", label: "История", icon: FileClock },
   { href: "/employees", label: "Справочники", icon: BookUser },
@@ -37,16 +37,16 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   });
   const sidebar = (
     <div className="flex h-full flex-col bg-[var(--sidebar)] px-3 py-4 text-[var(--sidebar-foreground)]">
-      <div className="flex h-12 items-center gap-3 px-2">
-        <div className="grid size-8 place-items-center rounded-md bg-white text-sm font-bold text-slate-950">О</div>
-        <div className="min-w-0">
-          <div className="truncate text-sm font-semibold">Отчётные документы</div>
-          <div className="text-xs text-white/45">Expense workspace</div>
+      <div className="flex min-h-12 items-center gap-3 px-2">
+        <Image src="/huaxun-logo.png" alt="Huaxun" width={40} height={40} className="size-10 shrink-0 object-contain" priority />
+        <div className="min-w-0 text-[13px] font-semibold leading-5">
+          <span className="block">Автоматизация</span>
+          <span className="block whitespace-nowrap">отчётных документов</span>
         </div>
       </div>
       <nav className="mt-6 space-y-1" aria-label="Основная навигация">
         {navigation.map((item) => {
-          const active = item.href === "/" ? pathname === "/" : pathname.startsWith(item.href);
+          const active = pathname.startsWith(item.href);
           const Icon = item.icon;
           return (
             <Link
