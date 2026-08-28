@@ -1,27 +1,17 @@
 "use client";
 
 import { zodResolver } from "@hookform/resolvers/zod";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { KeyRound, Laptop, Loader2, Moon, Sun } from "lucide-react";
-import { useTheme } from "next-themes";
-import { useEffect, useState } from "react";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { KeyRound, Loader2 } from "lucide-react";
+import { useEffect } from "react";
 import { useForm } from "react-hook-form";
 import { toast } from "sonner";
 import { z } from "zod";
-import { apiFetch } from "@/lib/api";
-import type { EmployeeAccount } from "@/lib/types";
-import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
-import { PageHeader } from "@/components/page-header";
-import { ErrorState, LoadingState } from "@/components/states";
-
-const modes = [
-  { value: "light", label: "Светлая", icon: Sun },
-  { value: "dark", label: "Тёмная", icon: Moon },
-  { value: "system", label: "Системная", icon: Laptop },
-];
+import { apiFetch } from "@/lib/api";
+import type { EmployeeAccount } from "@/lib/types";
 
 const passwordSchema = z.object({
   password: z.string().min(8, "Минимум 8 символов").max(128, "Максимум 128 символов"),
@@ -30,8 +20,6 @@ const passwordSchema = z.object({
   path: ["confirmation"],
   message: "Пароли не совпадают",
 });
-
-type PasswordForm = z.infer<typeof passwordSchema>;
 
 const ownPasswordSchema = z.object({
   currentPassword: z.string().min(8, "Минимум 8 символов").max(128, "Максимум 128 символов"),
@@ -46,6 +34,7 @@ const ownPasswordSchema = z.object({
   }
 });
 
+type PasswordForm = z.infer<typeof passwordSchema>;
 type OwnPasswordForm = z.infer<typeof ownPasswordSchema>;
 
 function PasswordDialog({ account, pending, onClose, onSubmit }: {
@@ -106,17 +95,16 @@ function OwnPasswordDialog({ open, pending, onClose, onSubmit }: {
   );
 }
 
-export default function SettingsPage() {
-  const { theme, setTheme } = useTheme();
+export function EmployeePasswordDialogs({ account, onClose }: {
+  account: EmployeeAccount | null;
+  onClose: () => void;
+}) {
   const queryClient = useQueryClient();
-  const [selected, setSelected] = useState<EmployeeAccount | null>(null);
-  const [ownPasswordOpen, setOwnPasswordOpen] = useState(false);
-  const accounts = useQuery({ queryKey: ["employee-accounts"], queryFn: () => apiFetch<EmployeeAccount[]>("/accounts/employees") });
   const password = useMutation({
     mutationFn: ({ employeeId, value }: { employeeId: string; value: string }) => apiFetch<EmployeeAccount>(`/accounts/employees/${employeeId}/password`, { method: "PUT", body: JSON.stringify({ password: value }) }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["employee-accounts"] });
-      setSelected(null);
+      onClose();
       toast.success("Пароль сотрудника обновлён");
     },
     onError: (error) => toast.error(error.message),
@@ -124,42 +112,15 @@ export default function SettingsPage() {
   const ownPassword = useMutation({
     mutationFn: ({ currentPassword, newPassword }: { currentPassword: string; newPassword: string }) => apiFetch<void>("/auth/password", { method: "PUT", body: JSON.stringify({ current_password: currentPassword, new_password: newPassword }) }),
     onSuccess: () => {
-      setOwnPasswordOpen(false);
+      onClose();
       toast.success("Пароль администратора обновлён");
     },
     onError: (error) => toast.error(error.message),
   });
-  return (
-    <>
-      <PageHeader title="Настройки" description="Управление доступом сотрудников и параметрами отображения." />
-      <section className="max-w-4xl border-y border-border py-5">
-        <h2 className="text-sm font-semibold">Учётные записи сотрудников</h2>
-        <p className="mt-1 text-sm text-muted">Логином служит email из справочника. Сотрудник сможет формировать отчёты только от своего имени.</p>
-        <div className="mt-4">
-          {accounts.isLoading ? <LoadingState rows={5} /> : accounts.error ? <ErrorState message={accounts.error.message} retry={() => accounts.refetch()} /> : (
-            <div className="divide-y divide-border border-y border-border">
-              {(accounts.data ?? []).map((account) => (
-                <div key={account.employee_id} className="flex flex-col gap-3 py-3 sm:flex-row sm:items-center">
-                  <div className="min-w-0 flex-1"><p className="text-sm font-medium">{account.full_name}</p><p className="truncate text-xs text-muted">{account.email ?? "Email не указан"} · {account.role === "admin" ? "администратор" : account.has_account ? "доступ настроен" : "доступ не настроен"}</p></div>
-                  <Button variant="secondary" disabled={!account.email} onClick={() => { if (account.role === "admin") setOwnPasswordOpen(true); else setSelected(account); }}><KeyRound className="size-4" />{account.role === "admin" ? "Изменить свой пароль" : account.has_account ? "Изменить пароль" : "Задать пароль"}</Button>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-      </section>
-      <section className="mt-8 max-w-xl border-y border-border py-5">
-        <h2 className="text-sm font-semibold">Тема интерфейса</h2>
-        <div className="mt-3 grid grid-cols-3 gap-2" role="radiogroup" aria-label="Тема интерфейса">
-          {modes.map(({ value, label, icon: Icon }) => (
-            <button key={value} role="radio" aria-checked={theme === value} onClick={() => setTheme(value)} className={cn("flex h-20 flex-col items-center justify-center gap-2 rounded-md border border-border bg-surface text-sm hover:bg-surface-muted", theme === value && "border-primary bg-primary-soft text-primary")}>
-              <Icon className="size-5" />{label}
-            </button>
-          ))}
-        </div>
-      </section>
-      <PasswordDialog account={selected} pending={password.isPending} onClose={() => setSelected(null)} onSubmit={(value) => { if (selected) password.mutate({ employeeId: selected.employee_id, value }); }} />
-      <OwnPasswordDialog open={ownPasswordOpen} pending={ownPassword.isPending} onClose={() => setOwnPasswordOpen(false)} onSubmit={(currentPassword, newPassword) => ownPassword.mutate({ currentPassword, newPassword })} />
-    </>
-  );
+
+  const employeeAccount = account?.role === "admin" ? null : account;
+  return <>
+    <PasswordDialog account={employeeAccount} pending={password.isPending} onClose={onClose} onSubmit={(value) => { if (employeeAccount) password.mutate({ employeeId: employeeAccount.employee_id, value }); }} />
+    <OwnPasswordDialog open={account?.role === "admin"} pending={ownPassword.isPending} onClose={onClose} onSubmit={(currentPassword, newPassword) => ownPassword.mutate({ currentPassword, newPassword })} />
+  </>;
 }

@@ -2,7 +2,7 @@
 
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { Building2, Check, ChevronDown, FileCheck2, Gift, Loader2, Plane, Search, Sparkles } from "lucide-react";
+import { Check, ChevronDown, FileCheck2, Gift, Loader2, Plane, Search, Sparkles, UtensilsCrossed } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useForm } from "react-hook-form";
@@ -78,7 +78,7 @@ const defaults: FormValues = {
   build_mode: "single",
 };
 
-const reportIcons = { business_trip: Plane, representative_expenses: Building2, gifts: Gift };
+const reportIcons = { business_trip: Plane, representative_expenses: UtensilsCrossed, gifts: Gift };
 
 function Field({ label, error, children, className }: { label: string; error?: string; children: React.ReactNode; className?: string }) {
   return <label className={cn("block text-sm font-medium", className)}>{label}<div className="mt-1.5">{children}</div>{error ? <span className="mt-1 block text-xs text-danger">{error}</span> : null}</label>;
@@ -126,9 +126,10 @@ export function ReportForm() {
   const [companyParticipants, setCompanyParticipants] = useState<string[]>([]);
   const [draftRestored, setDraftRestored] = useState(false);
   const recentCounterparties = useRef<string[]>([]);
+  const autoSelectedParticipantId = useRef<string | null>(null);
   const reportType = form.watch("report_type");
   const selectedEmployee = form.watch("employee_id");
-  const employees = employeesQuery.data ?? [];
+  const employees = useMemo(() => employeesQuery.data ?? [], [employeesQuery.data]);
   const isEmployee = user?.role === "employee";
   const selfEmployee = employees.find((employee) => employee.id === user?.employee_id);
 
@@ -158,6 +159,14 @@ export function ReportForm() {
       form.setValue("employee_id", user.employee_id, { shouldValidate: true });
     }
   }, [draftRestored, form, isEmployee, user]);
+
+  useEffect(() => {
+    if (!draftRestored || !selectedEmployee || autoSelectedParticipantId.current === selectedEmployee) return;
+    const employee = employees.find((item) => item.id === selectedEmployee);
+    if (!employee) return;
+    setCompanyParticipants((current) => current.includes(employee.full_name) ? current : [...current, employee.full_name]);
+    autoSelectedParticipantId.current = selectedEmployee;
+  }, [draftRestored, employees, selectedEmployee]);
 
   useEffect(() => {
     const expenseType: Receipt["expense_type"] = reportType === "business_trip" ? "такси" : reportType === "representative_expenses" ? "ресторан" : "подарки";
@@ -306,7 +315,7 @@ export function ReportForm() {
 
     <section className="flex flex-col gap-3 border-t py-5 sm:flex-row sm:items-center sm:justify-between">
       <div className="text-sm"><span className="text-muted">Чеков:</span> <strong>{receipts.length}</strong><span className="mx-2 text-border">|</span><span className="text-muted">Итого:</span> <strong>{total.toLocaleString("ru-RU", { minimumFractionDigits: 2 })} ₽</strong></div>
-      <div className="flex gap-2"><Button type="button" variant="secondary" onClick={() => { form.reset({ ...defaults, employee_id: isEmployee ? user?.employee_id ?? "" : "" }); setReceipts([]); setUploads([]); setCompanyParticipants([]); recentCounterparties.current = []; localStorage.removeItem(draftKey); }}>Очистить</Button><Button type="submit" disabled={generateMutation.isPending || employeesQuery.isLoading}>{generateMutation.isPending ? <Loader2 className="size-4 animate-spin" /> : <FileCheck2 className="size-4" />}Сформировать документы</Button></div>
+      <div className="flex gap-2"><Button type="button" variant="secondary" onClick={() => { const employeeId = isEmployee ? user?.employee_id ?? "" : ""; const employee = employees.find((item) => item.id === employeeId); form.reset({ ...defaults, employee_id: employeeId }); setReceipts([]); setUploads([]); setCompanyParticipants(employee ? [employee.full_name] : []); autoSelectedParticipantId.current = employee?.id ?? null; recentCounterparties.current = []; localStorage.removeItem(draftKey); }}>Очистить</Button><Button type="submit" disabled={generateMutation.isPending || employeesQuery.isLoading}>{generateMutation.isPending ? <Loader2 className="size-4 animate-spin" /> : <FileCheck2 className="size-4" />}Сформировать документы</Button></div>
     </section>
   </form>;
 }

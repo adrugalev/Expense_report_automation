@@ -27,7 +27,7 @@ test("employee can open only the report form for their own employee record", asy
   expect(await receiptTable.evaluate((element) => element.scrollWidth <= element.clientWidth + 1)).toBe(true);
   const menuButton = page.getByRole("button", { name: "Открыть меню" });
   if (await menuButton.isVisible()) await menuButton.click();
-  const brand = page.locator("aside:visible").getByText("Автоматизация отчётных документов", { exact: true });
+  const brand = page.locator("aside:visible").getByText("Автоматизация", { exact: true });
   await expect(brand).toBeVisible();
   expect(await brand.evaluate((element) => element.scrollWidth <= element.clientWidth + 1)).toBe(true);
   await expect(page.getByRole("link", { name: "Новый отчёт" })).toBeVisible();
@@ -52,11 +52,14 @@ test("admin account is linked to Drugalev and protected from employee password c
   await login(page);
   const menuButton = page.getByRole("button", { name: "Открыть меню" });
   if (await menuButton.isVisible()) await menuButton.click();
-  await page.getByRole("link", { name: "Настройки", exact: true }).click();
+  await expect(page.getByRole("link", { name: "Настройки", exact: true })).toHaveCount(0);
+  await page.getByRole("link", { name: "Сотрудники", exact: true }).click();
   const main = page.getByRole("main");
-  await expect(main.getByText("Другалев Александр Александрович", { exact: true })).toBeVisible();
-  await expect(main.getByText(/aleksandr\.drugalev@h-xgroup\.com.*администратор/)).toBeVisible();
-  const ownPasswordButton = main.getByRole("button", { name: "Изменить свой пароль", exact: true });
+  await expect(main.getByRole("heading", { name: "Сотрудники", exact: true })).toBeVisible();
+  const adminRow = main.locator("tbody tr").filter({ hasText: "Другалев Александр Александрович" });
+  await expect(adminRow.getByText("Другалев Александр Александрович", { exact: true })).toBeVisible();
+  await expect(adminRow.getByText("aleksandr.drugalev@h-xgroup.com", { exact: true })).toBeVisible();
+  const ownPasswordButton = adminRow.getByRole("button", { name: "Изменить свой пароль", exact: true });
   await expect(ownPasswordButton).toBeEnabled();
   await ownPasswordButton.click();
   await expect(page.getByRole("dialog").getByRole("heading", { name: "Изменить свой пароль" })).toBeVisible();
@@ -77,6 +80,11 @@ test("representative suggestions rotate counterparties and their participants", 
   await expect(page.getByRole("heading", { name: "Новый отчёт" })).toBeVisible();
   await expect(page.getByRole("img", { name: "Huaxun" })).toBeVisible();
   await page.getByRole("button", { name: /Представительские расходы/ }).click();
+
+  const selfParticipant = page.getByLabel(/Баранова Гиляна Басанговна/);
+  await expect(selfParticipant).toBeChecked();
+  await selfParticipant.uncheck();
+  await expect(selfParticipant).not.toBeChecked();
 
   const counterparty = page.getByLabel("Контрагент / организация");
   const participants = page.getByLabel("Участники со стороны контрагента");
@@ -109,6 +117,18 @@ test("representative suggestions rotate counterparties and their participants", 
   await expect(result).not.toHaveValue(firstResult);
   expect(await purpose.evaluate((element) => element.scrollHeight <= element.clientHeight + 1)).toBe(true);
   expect(await result.evaluate((element) => element.scrollHeight <= element.clientHeight + 1)).toBe(true);
+});
+
+test("selected employee is added to company participants and can be unchecked", async ({ page }) => {
+  await login(page);
+  await page.getByRole("button", { name: /Представительские расходы/ }).click();
+  await page.getByRole("button", { name: "Выберите сотрудника" }).click();
+  await page.getByRole("button", { name: /Баранова Гиляна Басанговна/ }).click();
+
+  const participant = page.getByLabel(/Баранова Гиляна Басанговна/);
+  await expect(participant).toBeChecked();
+  await participant.uncheck();
+  await expect(participant).not.toBeChecked();
 });
 
 test("workspace layouts have no horizontal viewport overflow", async ({ page }, testInfo) => {

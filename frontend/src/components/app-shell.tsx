@@ -1,7 +1,7 @@
 "use client";
 
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { BookUser, FileClock, FilePlus2, LogOut, Menu, Settings, X } from "lucide-react";
+import { BookUser, FileClock, FilePlus2, LogOut, Menu, X } from "lucide-react";
 import Image from "next/image";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
@@ -16,8 +16,7 @@ import { VersionDialog } from "@/components/version-dialog";
 const adminNavigation = [
   { href: "/reports/new", label: "Новый отчёт", icon: FilePlus2 },
   { href: "/reports/history", label: "История", icon: FileClock },
-  { href: "/employees", label: "Справочники", icon: BookUser },
-  { href: "/settings", label: "Настройки", icon: Settings },
+  { href: "/employees", label: "Сотрудники", icon: BookUser },
 ];
 
 const employeeNavigation = [

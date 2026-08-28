@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 from decimal import Decimal
 from io import BytesIO
 from pathlib import Path
+import shutil
 from uuid import uuid4
 from zipfile import ZIP_DEFLATED, ZipFile
 
@@ -133,6 +134,24 @@ class ReportService:
             error_message=record.error_message,
             warnings=list(record.warnings_data or []),
         )
+
+    def delete(self, report_id: str, user: UserRecord) -> None:
+        if user.role != "admin":
+            raise ReportPermissionError("Удалять отчёты может только администратор")
+        record = self.session.scalar(
+            select(ReportRecord)
+            .where(ReportRecord.id == report_id)
+            .options(selectinload(ReportRecord.files))
+        )
+        if not record:
+            raise ReportNotFoundError(report_id)
+
+        reports_root = (self.settings.storage_dir / "reports").resolve()
+        report_dir = (reports_root / report_id).resolve()
+        self.session.delete(record)
+        self.session.commit()
+        if report_dir.parent == reports_root and report_dir.is_dir():
+            shutil.rmtree(report_dir, ignore_errors=True)
 
     def file_path(self, report_id: str, file_id: str, user: UserRecord) -> tuple[Path, GeneratedFileRecord]:
         self.detail(report_id, user)

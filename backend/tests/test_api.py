@@ -153,6 +153,7 @@ def test_admin_manages_employee_password_and_employee_access_is_restricted(
     report = generated.json()
     assert report["employee_id"] == "baranova"
     assert authenticated_client.get(f"/api/reports/{report['id']}").status_code == 200
+    assert authenticated_client.delete(f"/api/reports/{report['id']}").status_code == 403
 
     assert authenticated_client.post("/api/auth/logout").status_code == 204
     admin_login = authenticated_client.post(
@@ -293,6 +294,13 @@ def test_generate_gift_report_and_download(authenticated_client: TestClient) -> 
     history = authenticated_client.get("/api/reports")
     assert history.status_code == 200
     assert any(item["id"] == report["id"] for item in history.json()["items"])
+
+    delete = authenticated_client.delete(f"/api/reports/{report['id']}")
+    assert delete.status_code == 204
+    assert authenticated_client.get(f"/api/reports/{report['id']}").status_code == 404
+    assert authenticated_client.get(report["files"][0]["download_url"]).status_code == 404
+    history_after_delete = authenticated_client.get("/api/reports")
+    assert all(item["id"] != report["id"] for item in history_after_delete.json()["items"])
 
 
 def test_generate_business_trip_report(authenticated_client: TestClient) -> None:

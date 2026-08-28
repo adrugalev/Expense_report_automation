@@ -112,6 +112,19 @@ def report_detail(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Отчет не найден") from exc
 
 
+@router.delete("/{report_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_report(
+    report_id: str,
+    session: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
+    user: UserRecord = Depends(require_roles("admin")),
+) -> None:
+    try:
+        ReportService(session, settings).delete(report_id, user)
+    except ReportNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Отчет не найден") from exc
+
+
 @router.get("/{report_id}/files/{file_id}", response_class=FileResponse)
 def download_file(
     report_id: str,
