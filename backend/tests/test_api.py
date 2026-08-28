@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import date
 from io import BytesIO
+import time
 
 from docx import Document
 from fastapi.testclient import TestClient
@@ -246,6 +247,32 @@ def test_upload_accepts_and_deletes_real_pdf(authenticated_client: TestClient) -
     upload = response.json()
     assert upload["mime_type"] == "application/pdf"
     assert upload["receipt"]["file_name"] == "receipt.pdf"
+    assert authenticated_client.delete(f"/api/uploads/{upload['id']}").status_code == 204
+
+
+def test_receipt_job_reports_progress_and_result(authenticated_client: TestClient) -> None:
+    payload = BytesIO()
+    writer = PdfWriter()
+    writer.add_blank_page(width=100, height=100)
+    writer.write(payload)
+
+    started = authenticated_client.post(
+        "/api/uploads/receipts/jobs",
+        files={"file": ("progress.pdf", payload.getvalue(), "application/pdf")},
+    )
+
+    assert started.status_code == 202, started.text
+    for _ in range(100):
+        job = authenticated_client.get(f"/api/uploads/receipts/jobs/{started.json()['job_id']}")
+        assert job.status_code == 200
+        if job.json()["status"] in {"completed", "failed"}:
+            break
+        time.sleep(0.05)
+    assert job.json()["status"] == "completed"
+    assert job.json()["progress"] == 100
+    assert job.json()["stage"] == "Готово"
+    upload = job.json()["result"]
+    assert upload["receipt"]["file_name"] == "progress.pdf"
     assert authenticated_client.delete(f"/api/uploads/{upload['id']}").status_code == 204
 
 

@@ -127,6 +127,7 @@ export function ReportForm() {
   const [draftRestored, setDraftRestored] = useState(false);
   const recentCounterparties = useRef<string[]>([]);
   const autoSelectedParticipantId = useRef<string | null>(null);
+  const purposesByReportType = useRef({ business_trip: "", gifts: "" });
   const reportType = form.watch("report_type");
   const selectedEmployee = form.watch("employee_id");
   const employees = useMemo(() => employeesQuery.data ?? [], [employeesQuery.data]);
@@ -244,6 +245,21 @@ export function ReportForm() {
   });
 
   const total = useMemo(() => receipts.reduce((sum, receipt) => sum + (Number(receipt.amount) || 0), 0), [receipts]);
+  const changeReportType = (nextType: FormValues["report_type"]) => {
+    const currentType = form.getValues("report_type");
+    if (currentType === nextType) return;
+    if (currentType === "business_trip" || currentType === "gifts") {
+      purposesByReportType.current[currentType] = form.getValues("purpose");
+    }
+    const nextPurpose = nextType === "business_trip"
+      ? purposesByReportType.current.business_trip
+      : nextType === "gifts"
+        ? purposesByReportType.current.gifts || giftPurpose
+        : "";
+    form.setValue("purpose", nextPurpose, { shouldDirty: true });
+    form.clearErrors("purpose");
+    form.setValue("report_type", nextType, { shouldValidate: true });
+  };
   const submit = (values: FormValues) => {
     if (!receipts.length) { toast.error("Добавьте хотя бы один чек"); return; }
     const employeeId = isEmployee ? user?.employee_id : values.employee_id;
@@ -264,7 +280,7 @@ export function ReportForm() {
 
   return <form onSubmit={form.handleSubmit(submit)} className="space-y-9">
     <section aria-labelledby="type-heading"><h2 id="type-heading" className="mb-3 text-base font-semibold">1. Тип отчёта</h2><div className="grid gap-3 md:grid-cols-3">
-      {options.map((option) => { const Icon = reportIcons[option.id]; const active = reportType === option.id; return <button key={option.id} type="button" onClick={() => form.setValue("report_type", option.id, { shouldValidate: true })} className={cn("min-h-28 rounded-lg border bg-surface p-4 text-left transition-colors hover:border-primary", active && "border-primary bg-primary-soft")}>
+      {options.map((option) => { const Icon = reportIcons[option.id]; const active = reportType === option.id; return <button key={option.id} type="button" onClick={() => changeReportType(option.id)} className={cn("min-h-28 rounded-lg border bg-surface p-4 text-left transition-colors hover:border-primary", active && "border-primary bg-primary-soft")}>
         <div className="flex items-start justify-between"><Icon className={cn("size-5", active ? "text-primary" : "text-muted")} />{active ? <Check className="size-4 text-primary" /> : null}</div><p className="mt-4 text-sm font-semibold">{option.name}</p><p className="mt-1 text-xs text-muted">{option.description}</p>
       </button>; })}
     </div></section>
@@ -317,7 +333,7 @@ export function ReportForm() {
 
     <section className="flex flex-col gap-3 border-t py-5 sm:flex-row sm:items-center sm:justify-between">
       <div className="text-sm"><span className="text-muted">Чеков:</span> <strong>{receipts.length}</strong><span className="mx-2 text-border">|</span><span className="text-muted">Итого:</span> <strong>{total.toLocaleString("ru-RU", { minimumFractionDigits: 2 })} ₽</strong></div>
-      <div className="flex gap-2"><Button type="button" variant="secondary" onClick={() => { const employeeId = user?.employee_id ?? ""; const employee = employees.find((item) => item.id === employeeId); form.reset({ ...defaults, employee_id: employeeId }); setReceipts([]); setUploads([]); setCompanyParticipants(employee ? [employee.full_name] : []); autoSelectedParticipantId.current = employee?.id ?? null; recentCounterparties.current = []; localStorage.removeItem(draftKey); }}>Очистить</Button><Button type="submit" disabled={generateMutation.isPending || employeesQuery.isLoading}>{generateMutation.isPending ? <Loader2 className="size-4 animate-spin" /> : <FileCheck2 className="size-4" />}Сформировать документы</Button></div>
+      <div className="flex gap-2"><Button type="button" variant="secondary" onClick={() => { const employeeId = user?.employee_id ?? ""; const employee = employees.find((item) => item.id === employeeId); form.reset({ ...defaults, employee_id: employeeId }); setReceipts([]); setUploads([]); setCompanyParticipants(employee ? [employee.full_name] : []); autoSelectedParticipantId.current = employee?.id ?? null; recentCounterparties.current = []; purposesByReportType.current = { business_trip: "", gifts: "" }; localStorage.removeItem(draftKey); }}>Очистить</Button><Button type="submit" disabled={generateMutation.isPending || employeesQuery.isLoading}>{generateMutation.isPending ? <Loader2 className="size-4 animate-spin" /> : <FileCheck2 className="size-4" />}Сформировать документы</Button></div>
     </section>
   </form>;
 }

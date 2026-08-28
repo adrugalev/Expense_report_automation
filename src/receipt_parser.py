@@ -4,13 +4,14 @@ import os
 import re
 import sys
 import tempfile
+import threading
 from importlib.util import find_spec
 from dataclasses import dataclass
 from datetime import date, datetime
 from decimal import Decimal
 from functools import lru_cache
 from pathlib import Path
-from typing import BinaryIO
+from typing import BinaryIO, Callable
 from urllib.parse import parse_qs, urlsplit
 
 from .address_lookup import lookup_address_online, merge_online_address, should_lookup_address, should_verify_restaurant_fields
@@ -25,6 +26,9 @@ PADDLEOCR_DETECTION_MODEL_NAME = "PP-OCRv5_mobile_det"
 PADDLEOCR_RECOGNITION_MODEL_NAME = "eslav_PP-OCRv5_mobile_rec"
 PADDLEOCR_MAX_SIDE = 1600
 PADDLEOCR_MIN_SCORE = 0.25
+PADDLEOCR_PDF_DPI = 180
+_PADDLEOCR_INFERENCE_LOCK = threading.Lock()
+ProgressCallback = Callable[[int, str], None]
 MONEY_RE = r"(\d[\d\s]*[,.]\d{2})"
 OCR_MONEY_RE = r"(\d[\d\s]*(?:[-–—„“”‚'’‘]|[,.]\s*)\d{2})"
 AMOUNT_PATTERNS = [
@@ -55,6 +59,10 @@ OCR_LOOSE_INN_PATTERN = re.compile(
     r"^\s*[ИIMМHН][НH]{0,2}\s*:?\s*((?:\d\s*){10,12})$",
     re.IGNORECASE,
 )
+OCR_ALPHANUMERIC_INN_PATTERN = re.compile(
+    r"^\s*[ИIMМHН][ИIMМHН]{0,3}\s*:?\s*([0-9OОDЕEUZSGBВIILT|!\s]{10,18})$",
+    re.IGNORECASE,
+)
 SUPPLIER_INN_PATTERN = re.compile(r"\bИНН\s+Поставщика\s*:\s*(\d{10}|\d{12})\b", re.IGNORECASE)
 CHECK_NUMBER_PATTERN = re.compile(r"(?:Кассовый\s+чек\.\s+Приход\s*)?(?:^|\n)\s*(?:N|№)\s*(\d+)\s+(?:N|№)\s*[АA]ВТ", re.IGNORECASE)
 SHIFT_PATTERN = re.compile(r"\bСмена\s*(?:N|№)\s*(\d+)\b", re.IGNORECASE)
@@ -81,7 +89,11 @@ class OcrRuntimeStatus:
     message: str = ""
 
 
-def parse_receipt_file(file_obj: BinaryIO, file_name: str) -> Receipt:
+def parse_receipt_file(
+    file_obj: BinaryIO,
+    file_name: str,
+    progress_callback: ProgressCallback | None = None,
+) -> Receipt:
     suffix = Path(file_name).suffix.lower()
     try:
         file_obj.seek(0)
@@ -91,23 +103,34 @@ def parse_receipt_file(file_obj: BinaryIO, file_name: str) -> Receipt:
         tmp.write(file_obj.read())
         tmp_path = Path(tmp.name)
     try:
-        return parse_receipt_path(tmp_path, file_name=file_name)
+        return parse_receipt_path(tmp_path, file_name=file_name, progress_callback=progress_callback)
     finally:
         tmp_path.unlink(missing_ok=True)
 
 
-def parse_receipt_path(path: Path, file_name: str | None = None) -> Receipt:
+def parse_receipt_path(
+    path: Path,
+    file_name: str | None = None,
+    progress_callback: ProgressCallback | None = None,
+) -> Receipt:
     file_name = file_name or path.name
     suffix = path.suffix.lower()
     text = ""
     qr_raw = None
+    _report_progress(progress_callback, 12, "Поиск QR-кода")
     if suffix in {".png", ".jpg", ".jpeg"}:
         qr_raw = _try_read_qr_from_image(path)
-        text = _try_ocr_image(path)
+        _report_progress(progress_callback, 28, "Подготовка изображения")
+        parsed_image_qr = parse_qr_payload(qr_raw) if qr_raw else None
+        _report_progress(progress_callback, 35, "Распознавание текста")
+        text = _try_ocr_image(path, prefer_identity_zones=_has_complete_qr_fiscal_data(parsed_image_qr))
     elif suffix == ".pdf":
         qr_raw = _try_read_qr_from_pdf(path)
+        _report_progress(progress_callback, 28, "Подготовка страниц PDF")
+        _report_progress(progress_callback, 35, "Распознавание текста")
         text = _try_extract_pdf_text(path)
 
+    _report_progress(progress_callback, 76, "Извлечение реквизитов")
     parsed_qr = parse_qr_payload(qr_raw) if qr_raw else None
     amount = _qr_amount(parsed_qr) or extract_amount(text)
     receipt_date = _qr_receipt_date(parsed_qr) or extract_date(text) or _extract_date_from_file_name(file_name)
@@ -117,6 +140,7 @@ def parse_receipt_path(path: Path, file_name: str | None = None) -> Receipt:
     fiscal_drive_number = _qr_fiscal_drive_number(parsed_qr) or extract_fiscal_drive_number(text)
     fiscal_sign = _qr_fiscal_sign(parsed_qr) or extract_fiscal_sign(text)
     if _needs_pdf_requisites_ocr(suffix, parsed_qr, amount, fiscal_document_number, fiscal_drive_number, fiscal_sign):
+        _report_progress(progress_callback, 82, "Дополнительная проверка суммы и ФД")
         supplemental_text = _try_ocr_pdf_requisites(path)
         if supplemental_text.strip():
             combined_text = f"{text}\n{supplemental_text}"
@@ -127,6 +151,7 @@ def parse_receipt_path(path: Path, file_name: str | None = None) -> Receipt:
                 fiscal_drive_number = supplemental_fiscal_drive_number
             fiscal_sign = fiscal_sign or extract_fiscal_sign(combined_text)
             text = combined_text
+    _report_progress(progress_callback, 92, "Проверка распознанных данных")
     amount_was_missing = amount is None
     amount = amount or Decimal("1.00")
     has_useful_data = bool(text.strip() or qr_raw)
@@ -162,6 +187,7 @@ def parse_receipt_path(path: Path, file_name: str | None = None) -> Receipt:
         comment = _append_comment(comment, _amount_recognition_comment(suffix, text))
     seller, address, comment = _verify_receipt_identity(seller, address, expense_type, comment)
 
+    _report_progress(progress_callback, 96, "Подготовка результата")
     return Receipt(
         file_name=file_name,
         date=receipt_date,
@@ -183,6 +209,11 @@ def parse_receipt_path(path: Path, file_name: str | None = None) -> Receipt:
     )
 
 
+def _report_progress(callback: ProgressCallback | None, percent: int, stage: str) -> None:
+    if callback:
+        callback(percent, stage)
+
+
 def parse_qr_payload(qr_raw: str) -> ParsedQr:
     query = _qr_query_string(qr_raw)
     values = {key: items[0] for key, items in parse_qs(query, keep_blank_values=True).items() if items}
@@ -193,6 +224,17 @@ def parse_qr_payload(qr_raw: str) -> ParsedQr:
         fiscal_drive_number=values.get("fn"),
         fiscal_document_number=values.get("i"),
         fiscal_sign=values.get("fp"),
+    )
+
+
+def _has_complete_qr_fiscal_data(parsed_qr: ParsedQr | None) -> bool:
+    return bool(
+        parsed_qr
+        and parsed_qr.receipt_date
+        and parsed_qr.amount
+        and parsed_qr.fiscal_drive_number
+        and parsed_qr.fiscal_document_number
+        and parsed_qr.fiscal_sign
     )
 
 
@@ -313,14 +355,14 @@ def _needs_pdf_requisites_ocr(
     parsed_qr: ParsedQr | None,
     amount: Decimal | None,
     fiscal_document_number: str | None,
-    fiscal_drive_number: str | None,
-    fiscal_sign: str | None,
+    _fiscal_drive_number: str | None,
+    _fiscal_sign: str | None,
 ) -> bool:
     if suffix != ".pdf":
         return False
     if parsed_qr and parsed_qr.amount and parsed_qr.fiscal_document_number and parsed_qr.fiscal_drive_number and parsed_qr.fiscal_sign:
         return False
-    return amount is None or fiscal_document_number is None or fiscal_drive_number is None or fiscal_sign is None
+    return amount is None or fiscal_document_number is None
 
 
 def extract_amount(text: str) -> Decimal | None:
@@ -428,6 +470,11 @@ def extract_inn(text: str) -> str | None:
             candidate = _normalize_inn_candidate(re.sub(r"\s+", "", loose_match.group(1)))
             if candidate:
                 return candidate
+        alphanumeric_match = OCR_ALPHANUMERIC_INN_PATTERN.match(line)
+        if alphanumeric_match:
+            candidate = _normalize_ocr_inn_candidate(alphanumeric_match.group(1))
+            if candidate:
+                return candidate
         if "инн" not in line.lower():
             continue
         generic = re.search(r"\b(\d{10}|\d{12})\b", line)
@@ -442,6 +489,19 @@ def _normalize_inn_candidate(value: str) -> str | None:
     if len(value) == 12 and value.startswith("00") and _is_valid_inn(value[2:]):
         return value[2:]
     return value if _is_valid_inn(value) else None
+
+
+def _normalize_ocr_inn_candidate(value: str) -> str | None:
+    substitutions = str.maketrans(
+        {
+            "O": "0", "О": "0", "D": "0", "U": "0",
+            "I": "1", "L": "1", "T": "7", "|": "1", "!": "1",
+            "Z": "2", "S": "5", "G": "6",
+            "B": "8", "В": "8", "E": "8", "Е": "8",
+        }
+    )
+    normalized = re.sub(r"\s+", "", value.upper()).translate(substitutions)
+    return _normalize_inn_candidate(normalized) if normalized.isdigit() else None
 
 
 def _is_valid_inn(value: str) -> bool:
@@ -801,11 +861,20 @@ def _parse_qr_date(value: str | None) -> date | None:
     return None
 
 
-def _try_ocr_image(path: Path) -> str:
+def _try_ocr_image(path: Path, *, prefer_identity_zones: bool = False) -> str:
     try:
         from PIL import Image
 
         with Image.open(path) as image:
+            if prefer_identity_zones:
+                width, height = image.size
+                header = image.crop((0, 0, width, max(1, int(height * 0.17))))
+                header_text = _try_paddleocr_pil_image(header, optimize_receipt=False)
+                if extract_seller(header_text) and extract_address(header_text) and extract_inn(header_text):
+                    return header_text
+                footer = image.crop((0, int(height * 0.55), width, height))
+                footer_text = _try_paddleocr_pil_image(footer, optimize_receipt=False)
+                return "\n".join(part for part in (header_text, footer_text) if part.strip())
             return _try_paddleocr_pil_image(image)
     except Exception:
         return ""
@@ -836,7 +905,7 @@ def _try_ocr_pdf(path: Path) -> str:
 
         with pdfplumber.open(path) as pdf:
             for page in pdf.pages:
-                image = page.to_image(resolution=300).original
+                image = page.to_image(resolution=PADDLEOCR_PDF_DPI).original
                 text = _try_paddleocr_pil_image(image)
                 if text.strip():
                     texts.append(text)
@@ -860,7 +929,7 @@ def _try_ocr_pdf(path: Path) -> str:
     try:
         from pdf2image import convert_from_path  # type: ignore
 
-        for image in convert_from_path(path, dpi=260):
+        for image in convert_from_path(path, dpi=PADDLEOCR_PDF_DPI):
             text = _try_paddleocr_pil_image(image)
             if text.strip():
                 texts.append(text)
@@ -876,9 +945,9 @@ def _try_ocr_pdf_requisites(path: Path) -> str:
 
         with pdfplumber.open(path) as pdf:
             for page in pdf.pages:
-                image = page.to_image(resolution=300).original
+                image = page.to_image(resolution=PADDLEOCR_PDF_DPI).original
                 width, height = image.size
-                crop = image.crop((0, int(height * 0.55), int(width * 0.58), height))
+                crop = image.crop((0, int(height * 0.78), width, height))
                 text = _try_paddleocr_pil_image(crop, optimize_receipt=False)
                 if text.strip():
                     texts.append(text)
@@ -904,11 +973,12 @@ def _try_paddleocr_pil_image(image, *, optimize_receipt: bool = True) -> str:
         import numpy as np
 
         prepared = _prepare_receipt_ocr_image(image) if optimize_receipt else image.convert("RGB")
-        results = _paddleocr_engine().predict(
-            np.asarray(prepared),
-            text_det_limit_side_len=PADDLEOCR_MAX_SIDE,
-            text_det_limit_type="max",
-        )
+        with _PADDLEOCR_INFERENCE_LOCK:
+            results = _paddleocr_engine().predict(
+                np.asarray(prepared),
+                text_det_limit_side_len=PADDLEOCR_MAX_SIDE,
+                text_det_limit_type="max",
+            )
         lines: list[str] = []
         for result in results:
             texts = result.get("rec_texts", [])
@@ -931,8 +1001,8 @@ def _prepare_receipt_ocr_image(image):
     if height <= width * 2.2:
         return source
 
-    top = source.crop((0, 0, width, int(height * 0.18)))
-    bottom = source.crop((0, int(height * 0.68), width, height))
+    top = source.crop((0, 0, width, int(height * 0.20)))
+    bottom = source.crop((0, int(height * 0.80), width, height))
     gap = max(24, width // 32)
     prepared = Image.new("RGB", (width, top.height + bottom.height + gap), "white")
     prepared.paste(top, (0, 0))
@@ -963,6 +1033,17 @@ def _paddleocr_engine():
         use_doc_unwarping=False,
         use_textline_orientation=False,
     )
+
+
+def warm_up_ocr_runtime() -> None:
+    try:
+        from PIL import Image, ImageDraw
+
+        image = Image.new("RGB", (640, 180), "white")
+        ImageDraw.Draw(image).text((24, 70), "OCR warmup 1234567890", fill="black")
+        _try_paddleocr_pil_image(image, optimize_receipt=False)
+    except Exception:
+        return
 
 
 def _try_read_qr_from_pdf(path: Path) -> str | None:
@@ -998,8 +1079,9 @@ def _try_read_qr_from_pdf_images(path: Path) -> str | None:
 def _try_read_qr_from_image(path: Path) -> str | None:
     try:
         import cv2
+        import numpy as np
 
-        image = cv2.imread(str(path))
+        image = cv2.imdecode(np.fromfile(path, dtype=np.uint8), cv2.IMREAD_COLOR)
         if image is None:
             return None
         return _decode_qr_cv2_image(image)
@@ -1035,14 +1117,12 @@ def _decode_qr_cv2_image(image) -> str | None:
 
         detector = cv2.QRCodeDetector()
         decoded_items: list[str] = []
-        for candidate in _qr_candidate_images(image):
-            for scale in (1.0, 1.5, 2.0, 3.0):
+        candidates = list(_qr_candidate_images(image))
+        for scale in (1.0, 1.5, 2.0):
+            for candidate in candidates:
                 scaled = candidate
                 if scale != 1.0:
                     scaled = cv2.resize(candidate, None, fx=scale, fy=scale, interpolation=cv2.INTER_CUBIC)
-                ok, decoded_info, _, _ = detector.detectAndDecodeMulti(scaled)
-                if ok:
-                    decoded_items.extend(item for item in decoded_info if item)
                 data, _, _ = detector.detectAndDecode(scaled)
                 if data:
                     decoded_items.append(data)

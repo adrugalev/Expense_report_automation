@@ -66,6 +66,19 @@ export interface ReceiptUpload {
   created_at: string;
 }
 
+export interface ReceiptRecognitionJobStart {
+  job_id: string;
+}
+
+export interface ReceiptRecognitionJobStatus {
+  job_id: string;
+  status: "queued" | "processing" | "completed" | "failed";
+  progress: number;
+  stage: string;
+  result: ReceiptUpload | null;
+  error: string | null;
+}
+
 export interface ReportFile {
   id: string;
   name: string;

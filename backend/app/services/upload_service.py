@@ -5,7 +5,7 @@ from uuid import uuid4
 
 from sqlalchemy.orm import Session
 
-from src.receipt_parser import parse_receipt_path
+from src.receipt_parser import ProgressCallback, parse_receipt_path
 from src.utils import slugify_file_part
 
 from ..config import Settings
@@ -47,7 +47,10 @@ class UploadService:
         content_type: str | None,
         payload: bytes,
         user: UserRecord,
+        progress_callback: ProgressCallback | None = None,
     ) -> UploadResponse:
+        if progress_callback:
+            progress_callback(3, "Проверка файла")
         safe_original = Path(original_name).name
         suffix = Path(safe_original).suffix.lower()
         expected_type = ALLOWED_FILE_TYPES.get(suffix)
@@ -70,8 +73,14 @@ class UploadService:
         safe_stem = slugify_file_part(Path(safe_original).stem, "receipt")[:80]
         stored_path = user_dir / f"{upload_id}_{safe_stem}{suffix}"
         stored_path.write_bytes(payload)
+        if progress_callback:
+            progress_callback(8, "Файл сохранён")
         try:
-            receipt = parse_receipt_path(stored_path, file_name=safe_original)
+            receipt = parse_receipt_path(
+                stored_path,
+                file_name=safe_original,
+                progress_callback=progress_callback,
+            )
         except Exception:
             stored_path.unlink(missing_ok=True)
             raise
@@ -87,6 +96,8 @@ class UploadService:
         )
         self.session.add(record)
         self.session.commit()
+        if progress_callback:
+            progress_callback(100, "Готово")
         return UploadResponse(
             id=record.id,
             original_name=record.original_name,

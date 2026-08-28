@@ -454,7 +454,7 @@ def test_paddleocr_uses_informative_zones_of_long_receipt(monkeypatch):
     text = parser._try_paddleocr_pil_image(Image.new("RGB", (100, 400), "white"))
 
     assert text == "ИТОГ\n19810.00"
-    assert captured["shape"] == (224, 100, 3)
+    assert captured["shape"] == (184, 100, 3)
     assert captured["kwargs"] == {"text_det_limit_side_len": 1600, "text_det_limit_type": "max"}
 
 
@@ -464,6 +464,10 @@ def test_extract_fiscal_drive_number_ignores_leading_ocr_digit():
     """
 
     assert extract_fiscal_drive_number(text) == "7364440900633551"
+
+
+def test_extract_inn_repairs_checksum_valid_alphanumeric_ocr():
+    assert extract_inn("MН DEU0011080") == "0800011080"
 
 
 def test_receipt_from_table_row_preserves_address():

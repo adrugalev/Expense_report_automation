@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 from contextlib import asynccontextmanager
 
@@ -9,6 +10,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.encoders import jsonable_encoder
 from starlette.middleware.trustedhost import TrustedHostMiddleware
+
+from src.receipt_parser import warm_up_ocr_runtime
 
 from .api import accounts, auth, dashboard, employees, health, meta, reports, uploads
 from .config import get_settings
@@ -30,8 +33,17 @@ async def lifespan(_app: FastAPI):
     create_database_schema()
     with SessionLocal() as session:
         seed_initial_data(session, settings)
+    warmup_task = None
+    if settings.environment != "test":
+        async def warm_ocr() -> None:
+            await asyncio.to_thread(warm_up_ocr_runtime)
+            logger.info("PaddleOCR runtime is ready")
+
+        warmup_task = asyncio.create_task(warm_ocr())
     logger.info("Expense Report API started in %s mode", settings.environment)
     yield
+    if warmup_task:
+        await warmup_task
     logger.info("Expense Report API stopped")
 
 
