@@ -50,7 +50,11 @@ DATE_PATTERNS = [
 ]
 COMPACT_DATE_PATTERN = re.compile(r"\b(\d{2})(\d{2})(\d{2})\s+\d{1,2}\s*:\s*\d{2}\b")
 INN_PATTERN = re.compile(r"\bИНН\s*:\s*(\d{10}|\d{12})\b", re.IGNORECASE)
-OCR_INN_PATTERN = re.compile(r"\b(?:ИНН|ННН|HHH|HНН|НHH|ИНH)\s*:?\s*(\d{10}|\d{12})\b", re.IGNORECASE)
+OCR_INN_PATTERN = re.compile(r"\b[ИIMМHН][НH]{2}\s*:?\s*(\d{10}|\d{12})\b", re.IGNORECASE)
+OCR_LOOSE_INN_PATTERN = re.compile(
+    r"^\s*[ИIMМHН][НH]{0,2}\s*:?\s*((?:\d\s*){10,12})$",
+    re.IGNORECASE,
+)
 SUPPLIER_INN_PATTERN = re.compile(r"\bИНН\s+Поставщика\s*:\s*(\d{10}|\d{12})\b", re.IGNORECASE)
 CHECK_NUMBER_PATTERN = re.compile(r"(?:Кассовый\s+чек\.\s+Приход\s*)?(?:^|\n)\s*(?:N|№)\s*(\d+)\s+(?:N|№)\s*[АA]ВТ", re.IGNORECASE)
 SHIFT_PATTERN = re.compile(r"\bСмена\s*(?:N|№)\s*(\d+)\b", re.IGNORECASE)
@@ -415,24 +419,43 @@ def extract_inn(text: str) -> str | None:
     for pattern in (INN_PATTERN, OCR_INN_PATTERN):
         match = pattern.search(normalized)
         if match:
-            return _normalize_inn_candidate(match.group(1))
+            candidate = _normalize_inn_candidate(match.group(1))
+            if candidate:
+                return candidate
     for line in _normalized_lines(text):
+        loose_match = OCR_LOOSE_INN_PATTERN.match(line)
+        if loose_match:
+            candidate = _normalize_inn_candidate(re.sub(r"\s+", "", loose_match.group(1)))
+            if candidate:
+                return candidate
         if "инн" not in line.lower():
             continue
         generic = re.search(r"\b(\d{10}|\d{12})\b", line)
         if generic:
-            return _normalize_inn_candidate(generic.group(1))
+            candidate = _normalize_inn_candidate(generic.group(1))
+            if candidate:
+                return candidate
     return None
 
 
-def _normalize_inn_candidate(value: str) -> str:
-    if len(value) == 12 and value.startswith("00"):
-        compact = value[2:]
+def _normalize_inn_candidate(value: str) -> str | None:
+    if len(value) == 12 and value.startswith("00") and _is_valid_inn(value[2:]):
+        return value[2:]
+    return value if _is_valid_inn(value) else None
+
+
+def _is_valid_inn(value: str) -> bool:
+    if len(value) == 10:
         weights = (2, 4, 10, 3, 5, 9, 4, 6, 8)
-        checksum = sum(int(digit) * weight for digit, weight in zip(compact[:9], weights)) % 11 % 10
-        if checksum == int(compact[-1]):
-            return compact
-    return value
+        checksum = sum(int(digit) * weight for digit, weight in zip(value[:9], weights)) % 11 % 10
+        return checksum == int(value[-1])
+    if len(value) == 12:
+        first_weights = (7, 2, 4, 10, 3, 5, 9, 4, 6, 8)
+        second_weights = (3, 7, 2, 4, 10, 3, 5, 9, 4, 6, 8)
+        first_checksum = sum(int(digit) * weight for digit, weight in zip(value[:10], first_weights)) % 11 % 10
+        second_checksum = sum(int(digit) * weight for digit, weight in zip(value[:11], second_weights)) % 11 % 10
+        return first_checksum == int(value[10]) and second_checksum == int(value[11])
+    return False
 
 
 def extract_supplier_inn(text: str) -> str | None:
@@ -655,6 +678,8 @@ def _fuzzy_fiscal_drive_line_index(lines: list[str]) -> int | None:
 
 
 def _short_fiscal_document_candidates(line: str) -> list[str]:
+    if OCR_LOOSE_INN_PATTERN.match(line):
+        return []
     if re.search(r"(?i)(?:ккт|kkt|rkt|инн|inn|сумма|итог|заказ|смена|чек)", line):
         return []
     numbers = re.findall(r"(?<![=.,])\b\d{1,8}\b(?![.,])", line)

@@ -155,10 +155,12 @@ export function ReportForm() {
   }, [companyParticipants, draftKey, draftRestored, form, receipts, uploads]);
 
   useEffect(() => {
-    if (draftRestored && isEmployee && user.employee_id) {
+    if (!draftRestored || !user?.employee_id) return;
+    const currentEmployeeId = form.getValues("employee_id");
+    if (isEmployee || !currentEmployeeId) {
       form.setValue("employee_id", user.employee_id, { shouldValidate: true });
     }
-  }, [draftRestored, form, isEmployee, user]);
+  }, [draftRestored, form, isEmployee, user?.employee_id]);
 
   useEffect(() => {
     if (!draftRestored || !selectedEmployee || autoSelectedParticipantId.current === selectedEmployee) return;
@@ -315,7 +317,7 @@ export function ReportForm() {
 
     <section className="flex flex-col gap-3 border-t py-5 sm:flex-row sm:items-center sm:justify-between">
       <div className="text-sm"><span className="text-muted">Чеков:</span> <strong>{receipts.length}</strong><span className="mx-2 text-border">|</span><span className="text-muted">Итого:</span> <strong>{total.toLocaleString("ru-RU", { minimumFractionDigits: 2 })} ₽</strong></div>
-      <div className="flex gap-2"><Button type="button" variant="secondary" onClick={() => { const employeeId = isEmployee ? user?.employee_id ?? "" : ""; const employee = employees.find((item) => item.id === employeeId); form.reset({ ...defaults, employee_id: employeeId }); setReceipts([]); setUploads([]); setCompanyParticipants(employee ? [employee.full_name] : []); autoSelectedParticipantId.current = employee?.id ?? null; recentCounterparties.current = []; localStorage.removeItem(draftKey); }}>Очистить</Button><Button type="submit" disabled={generateMutation.isPending || employeesQuery.isLoading}>{generateMutation.isPending ? <Loader2 className="size-4 animate-spin" /> : <FileCheck2 className="size-4" />}Сформировать документы</Button></div>
+      <div className="flex gap-2"><Button type="button" variant="secondary" onClick={() => { const employeeId = user?.employee_id ?? ""; const employee = employees.find((item) => item.id === employeeId); form.reset({ ...defaults, employee_id: employeeId }); setReceipts([]); setUploads([]); setCompanyParticipants(employee ? [employee.full_name] : []); autoSelectedParticipantId.current = employee?.id ?? null; recentCounterparties.current = []; localStorage.removeItem(draftKey); }}>Очистить</Button><Button type="submit" disabled={generateMutation.isPending || employeesQuery.isLoading}>{generateMutation.isPending ? <Loader2 className="size-4 animate-spin" /> : <FileCheck2 className="size-4" />}Сформировать документы</Button></div>
     </section>
   </form>;
 }

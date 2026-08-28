@@ -122,7 +122,8 @@ test("representative suggestions rotate counterparties and their participants", 
 test("selected employee is added to company participants and can be unchecked", async ({ page }) => {
   await login(page);
   await page.getByRole("button", { name: /Представительские расходы/ }).click();
-  await page.getByRole("button", { name: "Выберите сотрудника" }).click();
+  await expect(page.getByRole("button", { name: /Другалев Александр Александрович/ })).toBeVisible();
+  await page.getByRole("button", { name: /Другалев Александр Александрович/ }).click();
   await page.getByRole("button", { name: /Баранова Гиляна Басанговна/ }).click();
 
   const participant = page.getByLabel(/Баранова Гиляна Басанговна/);
@@ -144,7 +145,7 @@ test("user can generate a gift report from a manual receipt", async ({ page }) =
   await login(page);
   await page.getByRole("link", { name: "Новый отчёт" }).first().click();
   await page.getByRole("button", { name: /Подарки/ }).click();
-  await page.getByRole("button", { name: "Выберите сотрудника" }).click();
+  await page.getByRole("button", { name: /Другалев Александр Александрович/ }).click();
   await page.getByRole("button", { name: /Баранова Гиляна/ }).click();
   await page.getByRole("button", { name: "Добавить строку" }).click();
   await page.locator("tbody input").nth(4).fill("2500.00");

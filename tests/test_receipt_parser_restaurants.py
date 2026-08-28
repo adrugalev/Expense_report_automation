@@ -27,6 +27,10 @@ AKVILON_RECEIPT_PATHS = (
     LOCAL_SCAN_DIR / "check_cafe_akvilon.pdf",
     Path("D:/Dropbox/Сканы/check_cafe_akvilon.pdf"),
 )
+KLESHNI_RECEIPT_PATHS = (
+    LOCAL_SCAN_DIR / "check_cafe_281125.pdf",
+    Path("D:/Dropbox/Сканы/check_cafe_281125.pdf"),
+)
 
 
 def test_extract_restaurant_name_and_address_from_ooo_receipt_text():
@@ -330,6 +334,19 @@ def test_extract_legacy_kkt_inn_misread_as_latin_hhh():
     assert extract_inn("KKM 00055114 HHH 007701551746 25.10.12") == "7701551746"
 
 
+def test_extract_inn_when_paddleocr_misreads_label_as_latin_mhh():
+    assert extract_inn("PH KKT 0008761905043029\nMHH 9703192704\nФД 57149") == "9703192704"
+    assert extract_inn("MHH 9703192705") is None
+
+
+def test_extract_inn_when_paddleocr_splits_digits_and_drops_label_letters():
+    text = "PH KK1 0007564369036217\nИ 080001 1080\nH 7384440800179627\n15669\n1004644704"
+
+    assert extract_inn(text) == "0800011080"
+    assert extract_fiscal_document_number(text) == "15669"
+    assert extract_inn("И 080001 1081") is None
+
+
 def test_extract_compact_legacy_addresses_without_city_prefix():
     assert extract_address("Красная площааь д. 3") == "Красная площадь, д. 3"
     assert extract_address("Кривоколенный пер. д. 3, стр. 1") == "Кривоколенный пер., д. 3, стр. 1"
@@ -550,16 +567,18 @@ def test_parse_frank_by_basta_receipt_pdf():
 
 
 @pytest.mark.skipif(
-    not (LOCAL_SCAN_DIR / "check_cafe_281125.pdf").exists(),
+    not any(path.exists() for path in KLESHNI_RECEIPT_PATHS),
     reason="local Kleshni i Hvosti restaurant receipt fixture is unavailable",
 )
 def test_parse_kleshni_hvosti_receipt_pdf():
     from src.receipt_parser import parse_receipt_path
 
-    receipt = parse_receipt_path(LOCAL_SCAN_DIR / "check_cafe_281125.pdf")
+    receipt_path = next(path for path in KLESHNI_RECEIPT_PATHS if path.exists())
+    receipt = parse_receipt_path(receipt_path)
 
     assert receipt.seller == "Раковарня «Клешни и Хвосты»"
     assert receipt.address == "г. Москва, ул. Братиславская, д. 12"
+    assert receipt.inn == "0800011080"
     assert receipt.amount == Decimal("18690.00")
     assert receipt.expense_type == "ресторан"
     assert receipt.fiscal_document_number == "15669"
