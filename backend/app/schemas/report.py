@@ -13,10 +13,16 @@ BuildMode = Literal["single", "per_receipt", "per_receipt_different_companies"]
 ReportStatus = Literal["processing", "completed", "failed"]
 
 
+class ReceiptUploadReference(BaseModel):
+    upload_id: str = Field(min_length=1, max_length=36)
+    receipt_index: int = Field(ge=0)
+
+
 class ReportRequestBase(BaseModel):
     employee_id: str
     report_date: date
     receipts: list[Receipt] = Field(default_factory=list)
+    receipt_uploads: list[ReceiptUploadReference] = Field(default_factory=list)
 
 
 class BusinessTripGenerateRequest(ReportRequestBase):
@@ -74,6 +80,15 @@ class GeneratedFileResponse(BaseModel):
     download_url: str
 
 
+class ReportReceiptFileResponse(BaseModel):
+    id: str
+    name: str
+    mime_type: str
+    size: int
+    amount: Decimal
+    download_url: str
+
+
 class ReportSummaryResponse(BaseModel):
     id: str
     report_type: Literal["business_trip", "representative_expenses", "gifts"]
@@ -90,6 +105,7 @@ class ReportSummaryResponse(BaseModel):
 class ReportDetailResponse(ReportSummaryResponse):
     input: ReportGenerateRequest
     files: list[GeneratedFileResponse]
+    receipt_files: list[ReportReceiptFileResponse] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)
     error_message: str | None = None
 

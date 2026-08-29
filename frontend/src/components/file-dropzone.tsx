@@ -5,7 +5,7 @@ import { useCallback, useEffect, useState } from "react";
 import { useDropzone } from "react-dropzone";
 import { toast } from "sonner";
 import { apiFetch } from "@/lib/api";
-import type { ReceiptRecognitionJobStart, ReceiptRecognitionJobStatus, ReceiptUpload } from "@/lib/types";
+import type { ReceiptUpload } from "@/lib/types";
 import { cn, formatBytes } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 
@@ -18,7 +18,6 @@ type RecognitionProgress = {
   stage: string;
 };
 
-const wait = (milliseconds: number) => new Promise((resolve) => window.setTimeout(resolve, milliseconds));
 const INITIAL_STAGES = new Set(["Загрузка файла", "Начало обработки", "Проверка файла", "Файл сохранён"]);
 
 export function FileDropzone({ uploads, onUploaded, onRemoved }: { uploads: ReceiptUpload[]; onUploaded: (upload: ReceiptUpload) => void; onRemoved: (upload: ReceiptUpload) => void }) {
@@ -50,19 +49,8 @@ export function FileDropzone({ uploads, onUploaded, onRemoved }: { uploads: Rece
       const body = new FormData();
       body.append("file", file);
       try {
-        const started = await apiFetch<ReceiptRecognitionJobStart>("/uploads/receipts/jobs", { method: "POST", body });
-        let upload: ReceiptUpload | null = null;
-        while (!upload) {
-          const job = await apiFetch<ReceiptRecognitionJobStatus>(`/uploads/receipts/jobs/${started.job_id}`);
-          setProgress((current) => current?.currentName === file.name ? { ...current, percent: Math.max(current.percent, job.progress), stage: job.stage } : current);
-          if (job.status === "failed") throw new Error(job.error || `Не удалось распознать ${file.name}`);
-          if (job.status === "completed") {
-            if (!job.result) throw new Error(`Сервер не вернул результат для ${file.name}`);
-            upload = job.result;
-            break;
-          }
-          await wait(500);
-        }
+        setProgress((current) => current?.currentName === file.name ? { ...current, stage: "Распознавание чека" } : current);
+        const upload = await apiFetch<ReceiptUpload>("/uploads/receipts", { method: "POST", body });
         onUploaded(upload);
         toast.success(`${file.name}: чек распознан`);
       } catch (error) {
@@ -98,7 +86,7 @@ export function FileDropzone({ uploads, onUploaded, onRemoved }: { uploads: Rece
         <div className="relative mt-3 h-2 overflow-hidden rounded-full bg-surface-muted" role="progressbar" aria-label="Прогресс распознавания чеков" aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(((progress.completed + progress.percent / 100) / progress.total) * 100)}>
           <div className="h-full rounded-full bg-primary transition-[width] duration-500" style={{ width: `${((progress.completed + progress.percent / 100) / progress.total) * 100}%` }} />
         </div>
-        <p className="mt-1.5 text-xs text-muted">Готово: {progress.completed} из {progress.total}. Прогресс обновляется по этапам обработки на сервере.</p>
+        <p className="mt-1.5 text-xs text-muted">Готово: {progress.completed} из {progress.total}. Полоса движется во время обработки и завершается после ответа OCR.</p>
       </div> : null}
       {[...uploads.map((upload) => ({ name: upload.original_name, size: upload.size, upload })), ...pending.map((name) => ({ name, size: 0, upload: null }))].map((item, index) => (
         <div key={`${item.name}-${index}`} className="flex min-h-14 items-center gap-3 border-b border-border px-1 py-2">

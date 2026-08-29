@@ -87,6 +87,10 @@ export interface ReportFile {
   download_url: string;
 }
 
+export interface ReportReceiptFile extends ReportFile {
+  amount: string;
+}
+
 export interface ReportSummary {
   id: string;
   report_type: ReportType;
@@ -103,6 +107,7 @@ export interface ReportSummary {
 export interface ReportDetail extends ReportSummary {
   input: ReportPayload;
   files: ReportFile[];
+  receipt_files: ReportReceiptFile[];
   warnings: string[];
   error_message: string | null;
 }
@@ -129,6 +134,7 @@ export interface BaseReportPayload {
   employee_id: string;
   report_date: string;
   receipts: Receipt[];
+  receipt_uploads: Array<{ upload_id: string; receipt_index: number }>;
   build_mode: BuildMode;
 }
 

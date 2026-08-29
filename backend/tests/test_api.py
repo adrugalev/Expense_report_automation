@@ -278,6 +278,17 @@ def test_receipt_job_reports_progress_and_result(authenticated_client: TestClien
 
 def test_generate_gift_report_and_download(authenticated_client: TestClient) -> None:
     employees = authenticated_client.get("/api/employees").json()
+    receipt_payload = BytesIO()
+    receipt_writer = PdfWriter()
+    receipt_writer.add_blank_page(width=100, height=100)
+    receipt_writer.write(receipt_payload)
+    receipt_bytes = receipt_payload.getvalue()
+    uploaded = authenticated_client.post(
+        "/api/uploads/receipts",
+        files={"file": ("gift.pdf", receipt_bytes, "application/pdf")},
+    )
+    assert uploaded.status_code == 201, uploaded.text
+    upload = uploaded.json()
     request = {
         "report_type": "gifts",
         "employee_id": employees[0]["id"],
@@ -291,6 +302,7 @@ def test_generate_gift_report_and_download(authenticated_client: TestClient) -> 
                 "expense_type": "подарки",
             }
         ],
+        "receipt_uploads": [{"upload_id": upload["id"], "receipt_index": 0}],
         "purchase_date": date.today().isoformat(),
         "gift_name": "подарочная продукция",
         "gift_quantity": 1,
@@ -306,6 +318,9 @@ def test_generate_gift_report_and_download(authenticated_client: TestClient) -> 
     report = generated.json()
     assert report["status"] == "completed"
     assert len(report["files"]) == 1
+    assert len(report["receipt_files"]) == 1
+    assert report["receipt_files"][0]["name"] == "gift.pdf"
+    assert report["receipt_files"][0]["amount"] == "1250.50"
 
     download = authenticated_client.get(report["files"][0]["download_url"])
     assert download.status_code == 200
@@ -313,6 +328,12 @@ def test_generate_gift_report_and_download(authenticated_client: TestClient) -> 
     text = "\n".join(paragraph.text for paragraph in document.paragraphs)
     assert "1 250" in text
     assert date.today().strftime("%d.%m.%Y") in text
+
+    receipt_url = report["receipt_files"][0]["download_url"]
+    assert authenticated_client.delete(f"/api/uploads/{upload['id']}").status_code == 204
+    receipt_download = authenticated_client.get(receipt_url)
+    assert receipt_download.status_code == 200
+    assert receipt_download.content == receipt_bytes
 
     archive = authenticated_client.get(f"/api/reports/{report['id']}/files.zip")
     assert archive.status_code == 200
@@ -326,6 +347,7 @@ def test_generate_gift_report_and_download(authenticated_client: TestClient) -> 
     assert delete.status_code == 204
     assert authenticated_client.get(f"/api/reports/{report['id']}").status_code == 404
     assert authenticated_client.get(report["files"][0]["download_url"]).status_code == 404
+    assert authenticated_client.get(receipt_url).status_code == 404
     history_after_delete = authenticated_client.get("/api/reports")
     assert all(item["id"] != report["id"] for item in history_after_delete.json()["items"])
 

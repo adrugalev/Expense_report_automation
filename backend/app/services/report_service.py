@@ -21,9 +21,17 @@ from src.report_orchestration import (
 )
 from src.representative_autofill import choose_profile, complete_representative_fields
 from src.template_manager import TemplateManager
+from src.utils import slugify_file_part
 
 from ..config import Settings
-from ..database_models import EmployeeRecord, GeneratedFileRecord, ReportRecord, UserRecord
+from ..database_models import (
+    EmployeeRecord,
+    GeneratedFileRecord,
+    ReportReceiptRecord,
+    ReportRecord,
+    UploadRecord,
+    UserRecord,
+)
 from ..schemas.report import (
     BusinessTripGenerateRequest,
     GeneratedFileResponse,
@@ -31,6 +39,7 @@ from ..schemas.report import (
     ReportDetailResponse,
     ReportGenerateRequest,
     ReportListResponse,
+    ReportReceiptFileResponse,
     ReportSummaryResponse,
     RepresentativeGenerateRequest,
 )
@@ -60,6 +69,7 @@ class ReportService:
             if request.employee_id != user.employee_id:
                 raise ReportPermissionError("Сотрудник может формировать отчёты только для себя")
         employee = EmployeeService(self.session).get_core(request.employee_id)
+        receipt_uploads = self._resolve_receipt_uploads(request, user)
         report_id = str(uuid4())
         record = ReportRecord(
             id=report_id,
@@ -76,6 +86,7 @@ class ReportService:
 
         output_dir = self.settings.storage_dir / "reports" / report_id
         try:
+            self._store_receipt_files(record, request, receipt_uploads, output_dir)
             result = self._build(request, employee, output_dir, report_id)
             record.warnings_data = list(result.warnings)
             for path in result.files:
@@ -115,7 +126,7 @@ class ReportService:
         record = self.session.scalar(
             select(ReportRecord)
             .where(ReportRecord.id == report_id)
-            .options(selectinload(ReportRecord.files))
+            .options(selectinload(ReportRecord.files), selectinload(ReportRecord.receipt_files))
         )
         employee_can_open = (
             user.role == "employee"
@@ -131,6 +142,7 @@ class ReportService:
             **summary.model_dump(),
             input=request,
             files=[self._file_response(item) for item in record.files],
+            receipt_files=[self._receipt_file_response(item) for item in record.receipt_files],
             error_message=record.error_message,
             warnings=list(record.warnings_data or []),
         )
@@ -141,7 +153,7 @@ class ReportService:
         record = self.session.scalar(
             select(ReportRecord)
             .where(ReportRecord.id == report_id)
-            .options(selectinload(ReportRecord.files))
+            .options(selectinload(ReportRecord.files), selectinload(ReportRecord.receipt_files))
         )
         if not record:
             raise ReportNotFoundError(report_id)
@@ -169,6 +181,27 @@ class ReportService:
             raise ReportNotFoundError(file_id)
         return path, file_record
 
+    def receipt_file_path(
+        self,
+        report_id: str,
+        receipt_id: str,
+        user: UserRecord,
+    ) -> tuple[Path, ReportReceiptRecord]:
+        self.detail(report_id, user)
+        receipt_record = self.session.scalar(
+            select(ReportReceiptRecord).where(
+                ReportReceiptRecord.id == receipt_id,
+                ReportReceiptRecord.report_id == report_id,
+            )
+        )
+        if not receipt_record:
+            raise ReportNotFoundError(receipt_id)
+        path = Path(receipt_record.stored_path).resolve()
+        reports_root = (self.settings.storage_dir / "reports").resolve()
+        if reports_root not in path.parents or not path.is_file():
+            raise ReportNotFoundError(receipt_id)
+        return path, receipt_record
+
     def zip_bytes(self, report_id: str, user: UserRecord) -> bytes:
         detail = self.detail(report_id, user)
         buffer = BytesIO()
@@ -182,7 +215,7 @@ class ReportService:
         if isinstance(request, BusinessTripGenerateRequest):
             report = BusinessTripReport(
                 employee=employee,
-                **request.model_dump(exclude={"report_type", "employee_id", "build_mode"}),
+                **request.model_dump(exclude={"report_type", "employee_id", "build_mode", "receipt_uploads"}),
             )
             return build_report_documents(
                 ReportBuildCommand("business_trip", report),
@@ -192,7 +225,7 @@ class ReportService:
         if isinstance(request, GiftGenerateRequest):
             report = GiftExpenseReport(
                 initiator=employee,
-                **request.model_dump(exclude={"report_type", "employee_id", "build_mode"}),
+                **request.model_dump(exclude={"report_type", "employee_id", "build_mode", "receipt_uploads"}),
             )
             return build_report_documents(
                 ReportBuildCommand("gifts", report),
@@ -200,7 +233,7 @@ class ReportService:
                 output_dir,
             )
 
-        data = request.model_dump(exclude={"report_type", "employee_id", "build_mode"})
+        data = request.model_dump(exclude={"report_type", "employee_id", "build_mode", "receipt_uploads"})
         restaurant, place = representative_receipt_defaults(request.receipts)
         data["restaurant_name"] = data.get("restaurant_name") or restaurant
         data["place"] = data.get("place") or place
@@ -250,6 +283,64 @@ class ReportService:
         ]
         return "|".join([report_id, request.employee_id, str(request.event_date), *receipt_parts])
 
+    def _resolve_receipt_uploads(
+        self,
+        request: ReportGenerateRequest,
+        user: UserRecord,
+    ) -> list[tuple[int, UploadRecord]]:
+        resolved: list[tuple[int, UploadRecord]] = []
+        used_uploads: set[str] = set()
+        used_receipts: set[int] = set()
+        for link in request.receipt_uploads:
+            if link.upload_id in used_uploads or link.receipt_index in used_receipts:
+                raise ValueError("Один чек указан в отчёте несколько раз")
+            if link.receipt_index >= len(request.receipts):
+                raise ValueError("Не найдена строка распознанных данных для чека")
+            upload = self.session.get(UploadRecord, link.upload_id)
+            if not upload or upload.created_by != user.id:
+                raise ValueError("Загруженный чек не найден или принадлежит другому пользователю")
+            receipt_name = Path(request.receipts[link.receipt_index].file_name).name
+            if receipt_name != upload.original_name:
+                raise ValueError("Файл чека не соответствует строке распознанных данных")
+            used_uploads.add(link.upload_id)
+            used_receipts.add(link.receipt_index)
+            resolved.append((link.receipt_index, upload))
+        return sorted(resolved, key=lambda item: item[0])
+
+    def _store_receipt_files(
+        self,
+        record: ReportRecord,
+        request: ReportGenerateRequest,
+        uploads: list[tuple[int, UploadRecord]],
+        output_dir: Path,
+    ) -> None:
+        if not uploads:
+            return
+        receipts_dir = output_dir / "receipts"
+        receipts_dir.mkdir(parents=True, exist_ok=True)
+        uploads_root = (self.settings.storage_dir / "uploads").resolve()
+        for order, (receipt_index, upload) in enumerate(uploads):
+            source = Path(upload.stored_path).resolve()
+            if uploads_root not in source.parents or not source.is_file():
+                raise ValueError(f"Исходный файл чека «{upload.original_name}» не найден")
+            suffix = Path(upload.original_name).suffix.lower()
+            safe_stem = slugify_file_part(Path(upload.original_name).stem, "receipt")[:80]
+            destination = receipts_dir / f"{order + 1:02d}_{safe_stem}{suffix}"
+            shutil.copy2(source, destination)
+            receipt = request.receipts[receipt_index]
+            record.receipt_files.append(
+                ReportReceiptRecord(
+                    id=str(uuid4()),
+                    source_upload_id=upload.id,
+                    name=upload.original_name,
+                    stored_path=str(destination),
+                    mime_type=upload.mime_type,
+                    size=destination.stat().st_size,
+                    amount=Decimal(str(receipt.amount)),
+                    sort_order=order,
+                )
+            )
+
     def _summary(self, record: ReportRecord) -> ReportSummaryResponse:
         employee = self.session.get(EmployeeRecord, record.employee_id) if record.employee_id else None
         receipts = record.input_data.get("receipts", [])
@@ -287,4 +378,15 @@ class ReportService:
             mime_type=record.mime_type,
             size=record.size,
             download_url=f"/api/reports/{record.report_id}/files/{record.id}",
+        )
+
+    @staticmethod
+    def _receipt_file_response(record: ReportReceiptRecord) -> ReportReceiptFileResponse:
+        return ReportReceiptFileResponse(
+            id=record.id,
+            name=record.name,
+            mime_type=record.mime_type,
+            size=record.size,
+            amount=record.amount,
+            download_url=f"/api/reports/{record.report_id}/receipts/{record.id}",
         )

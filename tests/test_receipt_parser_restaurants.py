@@ -14,6 +14,7 @@ from src.receipt_parser import (
     extract_inn,
     extract_seller,
     guess_expense_type,
+    normalize_receipt_text,
     receipt_from_table_row,
 )
 
@@ -337,6 +338,35 @@ def test_extract_legacy_kkt_inn_misread_as_latin_hhh():
 def test_extract_inn_when_paddleocr_misreads_label_as_latin_mhh():
     assert extract_inn("PH KKT 0008761905043029\nMHH 9703192704\nФД 57149") == "9703192704"
     assert extract_inn("MHH 9703192705") is None
+
+
+def test_extract_inn_when_paddleocr_misreads_label_as_latin_whh():
+    assert extract_inn("ФП:0738083470\nWHH:9709058310\nСмена N00327") == "9709058310"
+    assert extract_inn("WHH:9709058311") is None
+
+
+def test_normalize_standard_russian_receipt_labels_without_touching_items():
+    text = "\n".join(
+        (
+            "WHH:9709058310",
+            "PH KKT: 0007917683060486",
+            "3H KKT: 4003079002363074",
+            "CHO: УСН доход-расход",
+            "4eк N00005",
+            "CуMма БЕ3 НЦC =3360.00",
+            "Mister Fish & Chips",
+        )
+    )
+
+    assert normalize_receipt_text(text).splitlines() == [
+        "ИНН:9709058310",
+        "РН ККТ: 0007917683060486",
+        "ЗН ККТ: 4003079002363074",
+        "СНО: УСН доход-расход",
+        "ЧЕК N00005",
+        "СУММА БЕЗ НДС =3360.00",
+        "Mister Fish & Chips",
+    ]
 
 
 def test_extract_inn_when_paddleocr_splits_digits_and_drops_label_letters():

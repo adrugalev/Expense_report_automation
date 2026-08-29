@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from decimal import Decimal
 from typing import Any
 
-from sqlalchemy import JSON, Boolean, DateTime, ForeignKey, Integer, String, Text
+from sqlalchemy import JSON, Boolean, DateTime, ForeignKey, Integer, Numeric, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .database import Base
@@ -83,6 +84,11 @@ class ReportRecord(Base):
         cascade="all, delete-orphan",
         order_by="GeneratedFileRecord.name",
     )
+    receipt_files: Mapped[list[ReportReceiptRecord]] = relationship(
+        back_populates="report",
+        cascade="all, delete-orphan",
+        order_by="ReportReceiptRecord.sort_order",
+    )
 
 
 class GeneratedFileRecord(Base):
@@ -97,3 +103,20 @@ class GeneratedFileRecord(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
 
     report: Mapped[ReportRecord] = relationship(back_populates="files")
+
+
+class ReportReceiptRecord(Base):
+    __tablename__ = "report_receipts"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    report_id: Mapped[str] = mapped_column(ForeignKey("reports.id", ondelete="CASCADE"), index=True)
+    source_upload_id: Mapped[str] = mapped_column(String(36), index=True)
+    name: Mapped[str] = mapped_column(String(255))
+    stored_path: Mapped[str] = mapped_column(Text)
+    mime_type: Mapped[str] = mapped_column(String(120))
+    size: Mapped[int] = mapped_column(Integer)
+    amount: Mapped[Decimal] = mapped_column(Numeric(14, 2))
+    sort_order: Mapped[int] = mapped_column(Integer, default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+
+    report: Mapped[ReportRecord] = relationship(back_populates="receipt_files")

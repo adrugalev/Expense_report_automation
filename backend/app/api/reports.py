@@ -140,6 +140,21 @@ def download_file(
     return FileResponse(path, media_type=record.mime_type, filename=record.name)
 
 
+@router.get("/{report_id}/receipts/{receipt_id}", response_class=FileResponse)
+def download_receipt_file(
+    report_id: str,
+    receipt_id: str,
+    session: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
+    user: UserRecord = Depends(get_current_user),
+) -> FileResponse:
+    try:
+        path, record = ReportService(session, settings).receipt_file_path(report_id, receipt_id, user)
+    except ReportNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Чек не найден") from exc
+    return FileResponse(path, media_type=record.mime_type, filename=record.name)
+
+
 @router.get("/{report_id}/files.zip")
 def download_zip(
     report_id: str,

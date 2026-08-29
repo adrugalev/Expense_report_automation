@@ -16,6 +16,8 @@ import { Textarea } from "@/components/ui/textarea";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { apiFetch } from "@/lib/api";
 import { useUser } from "@/hooks/use-user";
+import { switchReportPurpose } from "@/lib/report-purpose";
+import { buildReceiptUploadLinks } from "@/lib/receipt-upload-links";
 import type { Employee, Receipt, ReceiptUpload, ReportDetail, ReportPayload, ReportTypeOption } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
@@ -248,15 +250,15 @@ export function ReportForm() {
   const changeReportType = (nextType: FormValues["report_type"]) => {
     const currentType = form.getValues("report_type");
     if (currentType === nextType) return;
-    if (currentType === "business_trip" || currentType === "gifts") {
-      purposesByReportType.current[currentType] = form.getValues("purpose");
-    }
-    const nextPurpose = nextType === "business_trip"
-      ? purposesByReportType.current.business_trip
-      : nextType === "gifts"
-        ? purposesByReportType.current.gifts || giftPurpose
-        : "";
-    form.setValue("purpose", nextPurpose, { shouldDirty: true });
+    const transition = switchReportPurpose(
+      currentType,
+      nextType,
+      form.getValues("purpose"),
+      purposesByReportType.current,
+      giftPurpose,
+    );
+    purposesByReportType.current = transition.savedPurposes;
+    form.setValue("purpose", transition.purpose, { shouldDirty: true });
     form.clearErrors("purpose");
     form.setValue("report_type", nextType, { shouldValidate: true });
   };
@@ -264,7 +266,14 @@ export function ReportForm() {
     if (!receipts.length) { toast.error("Добавьте хотя бы один чек"); return; }
     const employeeId = isEmployee ? user?.employee_id : values.employee_id;
     if (!employeeId) { toast.error("Учётная запись не связана с сотрудником"); return; }
-    const base = { report_type: values.report_type, employee_id: employeeId, report_date: values.report_date, receipts, build_mode: values.build_mode };
+    const base = {
+      report_type: values.report_type,
+      employee_id: employeeId,
+      report_date: values.report_date,
+      receipts,
+      receipt_uploads: buildReceiptUploadLinks(receipts, uploads),
+      build_mode: values.build_mode,
+    };
     let payload: ReportPayload;
     if (values.report_type === "business_trip") payload = { ...base, report_type: "business_trip", build_mode: "single", trip_city: values.trip_city.trim(), trip_start_date: values.trip_start_date, trip_end_date: values.trip_end_date, purpose: values.purpose.trim() };
     else if (values.report_type === "representative_expenses") payload = { ...base, report_type: "representative_expenses", event_date: values.event_date, place: values.place.trim(), restaurant_name: values.restaurant_name.trim(), counterparty: values.counterparty.trim(), meeting_purpose: values.meeting_purpose.trim(), participants_company: companyParticipants, participants_counterparty: values.participants_counterparty.split("\n").map((item) => item.trim()).filter(Boolean), meeting_result: values.meeting_result.trim() };

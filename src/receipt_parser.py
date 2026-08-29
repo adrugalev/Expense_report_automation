@@ -54,13 +54,13 @@ DATE_PATTERNS = [
 ]
 COMPACT_DATE_PATTERN = re.compile(r"\b(\d{2})(\d{2})(\d{2})\s+\d{1,2}\s*:\s*\d{2}\b")
 INN_PATTERN = re.compile(r"\bИНН\s*:\s*(\d{10}|\d{12})\b", re.IGNORECASE)
-OCR_INN_PATTERN = re.compile(r"\b[ИIMМHН][НH]{2}\s*:?\s*(\d{10}|\d{12})\b", re.IGNORECASE)
+OCR_INN_PATTERN = re.compile(r"\b[ИIMМHНWШ][НH]{2}\s*:?\s*(\d{10}|\d{12})\b", re.IGNORECASE)
 OCR_LOOSE_INN_PATTERN = re.compile(
-    r"^\s*[ИIMМHН][НH]{0,2}\s*:?\s*((?:\d\s*){10,12})$",
+    r"^\s*[ИIMМHНWШ][НH]{0,2}\s*:?\s*((?:\d\s*){10,12})$",
     re.IGNORECASE,
 )
 OCR_ALPHANUMERIC_INN_PATTERN = re.compile(
-    r"^\s*[ИIMМHН][ИIMМHН]{0,3}\s*:?\s*([0-9OОDЕEUZSGBВIILT|!\s]{10,18})$",
+    r"^\s*[ИIMМHНWШ][ИIMМHН]{0,3}\s*:?\s*([0-9OОDЕEUZSGBВIILT|!\s]{10,18})$",
     re.IGNORECASE,
 )
 SUPPLIER_INN_PATTERN = re.compile(r"\bИНН\s+Поставщика\s*:\s*(\d{10}|\d{12})\b", re.IGNORECASE)
@@ -812,12 +812,32 @@ def _normalized_lines(text: str) -> list[str]:
     lines = []
     for line in text.splitlines():
         cleaned = re.sub(r"\s+", " ", line).strip()
+        cleaned = _normalize_russian_receipt_labels(cleaned)
         cleaned = re.sub(r"(\d)\s+[,.]\s+(\d{2})(?=\D|$)", r"\1.\2", cleaned)
         cleaned = re.sub(r"(\d)[,.]\s+(\d{2})(?=\D|$)", r"\1.\2", cleaned)
         cleaned = re.sub(r"(\d)\s*[„“”‚'’‘]\s*(\d{2})(?=\D|$)", r"\1.\2", cleaned)
         if cleaned:
             lines.append(cleaned)
     return lines
+
+
+def _normalize_russian_receipt_labels(value: str) -> str:
+    """Repair only standard Russian fiscal labels, leaving names and items untouched."""
+    value = re.sub(
+        r"(?i)^(?:[WШMМHНИI][HН]{2})(?=\s*:?\s*(?:\d[\d\s]{8,14})$)",
+        "ИНН",
+        value,
+    )
+    value = re.sub(r"(?i)^[PР][HН]\s+[KК][KК][TТ](?=\s*:)", "РН ККТ", value)
+    value = re.sub(r"(?i)^[3З][HН]\s+[KК][KК][TТ](?=\s*:)", "ЗН ККТ", value)
+    value = re.sub(r"(?i)^C[HН][OО0](?=\s*:)", "СНО", value)
+    value = re.sub(r"(?i)^4[ЕE][KК](?=\s+(?:N|№|\d))", "ЧЕК", value)
+    value = re.sub(
+        r"(?i)^C[УY]M[MМ][AА]\s+Б[ЕE][З3]\s+Н(?:[ДD][СC]|Ц[СC])(?=\s|:|$)",
+        "СУММА БЕЗ НДС",
+        value,
+    )
+    return value
 
 
 def _parse_decimal(value: str | None) -> Decimal | None:
