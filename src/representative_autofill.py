@@ -26,16 +26,27 @@ def profile_by_counterparty(counterparty: str) -> dict[str, Any]:
 
 
 def choose_profile(signature: str, recent_counterparties: Iterable[str] = ()) -> dict[str, Any]:
-    """Choose a deterministic profile while avoiding the three most recent companies."""
+    """Choose every available company once before starting a new rotation."""
 
-    recent = list(recent_counterparties)
-    candidates = [
-        profile
-        for profile in REPRESENTATIVE_AUTOFILL_PROFILES
-        if profile["counterparty"] not in set(recent[-3:])
-    ] or REPRESENTATIVE_AUTOFILL_PROFILES
+    profiles = REPRESENTATIVE_AUTOFILL_PROFILES
     seed = sum(ord(char) for char in signature)
-    return candidates[seed % len(candidates)]
+    offset = seed % len(profiles)
+    ordered = profiles[offset:] + profiles[:offset]
+    known_names = {profile["counterparty"] for profile in profiles}
+    recent = [name for name in recent_counterparties if name in known_names]
+    used = set(recent)
+
+    for profile in ordered:
+        if profile["counterparty"] not in used:
+            return profile
+
+    if recent:
+        last_index = next(
+            index for index, profile in enumerate(ordered)
+            if profile["counterparty"] == recent[-1]
+        )
+        return ordered[(last_index + 1) % len(ordered)]
+    return ordered[0]
 
 
 def results_from_purposes(purpose_text: str) -> list[str]:

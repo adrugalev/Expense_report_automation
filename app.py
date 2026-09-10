@@ -19,6 +19,7 @@ from src.models import BusinessTripReport, GiftExpenseReport, Receipt, Represent
 from src.receipt_parser import ocr_runtime_status, parse_receipt_file, receipt_from_table_row
 from src.representative_autofill import (
     REPRESENTATIVE_AUTOFILL_PROFILES,
+    choose_profile,
     complete_representative_fields,
     profile_by_counterparty,
     results_from_purposes,
@@ -617,18 +618,11 @@ def _representative_autofill_profile(data: dict) -> dict:
         return _representative_profile_by_counterparty(counterparty)
 
     recent = list(st.session_state.get("_representative_recent_counterparties", []))
-    seed = sum(ord(char) for char in signature)
-    profiles = REPRESENTATIVE_AUTOFILL_PROFILES
-    candidates = [
-        profile
-        for profile in profiles
-        if profile["counterparty"] not in set(recent[-3:])
-    ] or profiles
-    profile = candidates[seed % len(candidates)]
+    profile = choose_profile(signature, recent)
 
     assignments[signature] = profile["counterparty"]
     recent.append(profile["counterparty"])
-    st.session_state["_representative_recent_counterparties"] = recent[-6:]
+    st.session_state["_representative_recent_counterparties"] = recent[-len(REPRESENTATIVE_AUTOFILL_PROFILES):]
     return profile
 
 

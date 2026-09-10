@@ -24,6 +24,7 @@ import { cn } from "@/lib/utils";
 const today = () => new Date().toISOString().slice(0, 10);
 const giftPurpose = "Создание долгосрочных деловых отношений, укрепление связей с ключевыми клиентами и деловыми партнёрами и формирование корпоративного имиджа и деловой репутации";
 const draftKeyPrefix = "expense-report-draft-v2";
+const representativeCompanyCount = 20;
 
 const schema = z.object({
   report_type: z.enum(["business_trip", "representative_expenses", "gifts"]),
@@ -212,7 +213,7 @@ export function ReportForm() {
         recentCounterparties.current = [
           ...recentCounterparties.current.filter((item) => item !== currentCounterparty),
           currentCounterparty,
-        ].slice(-3);
+        ].slice(-representativeCompanyCount);
       }
       return apiFetch<{ counterparty: string; meeting_purpose: string; meeting_result: string; participants_counterparty: string[] }>("/reports/suggestions/representative", {
         method: "POST",
@@ -226,7 +227,7 @@ export function ReportForm() {
       recentCounterparties.current = [
         ...recentCounterparties.current.filter((item) => item !== suggestion.counterparty),
         suggestion.counterparty,
-      ].slice(-3);
+      ].slice(-representativeCompanyCount);
       form.setValue("counterparty", suggestion.counterparty);
       form.setValue("meeting_purpose", suggestion.meeting_purpose);
       form.setValue("meeting_result", suggestion.meeting_result);

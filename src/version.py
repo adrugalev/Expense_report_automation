@@ -4,7 +4,7 @@ from dataclasses import dataclass
 
 
 APP_VERSION_DATE = "10.09.2026"
-APP_VERSION_REVISION = 2
+APP_VERSION_REVISION = 3
 
 
 @dataclass(frozen=True)
@@ -15,6 +15,14 @@ class VersionHistoryEntry:
 
 
 APP_VERSION_HISTORY = (
+    VersionHistoryEntry(
+        revision=3,
+        date="10.09.2026",
+        changes=(
+            "Кнопка «Я — Джон Сноу» перебирает все 20 компаний без повторов до начала нового цикла.",
+            "Устранён повторяющийся короткий цикл из пяти контрагентов.",
+        ),
+    ),
     VersionHistoryEntry(
         revision=2,
         date="10.09.2026",

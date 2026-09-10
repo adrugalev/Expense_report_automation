@@ -201,18 +201,18 @@ def test_representative_suggestions_rotate_counterparties_and_participants(
     previous_purpose: str | None = None
     previous_result: str | None = None
 
-    for _ in range(5):
+    for _ in range(20):
         response = authenticated_client.post(
             "/api/reports/suggestions/representative",
             json={
                 "signature": "Ресторан Тест Москва",
-                "recent_counterparties": recent[-3:],
+                "recent_counterparties": recent,
                 "meeting_purpose": "",
             },
         )
         assert response.status_code == 200
         suggestion = response.json()
-        assert suggestion["counterparty"] not in recent[-3:]
+        assert suggestion["counterparty"] not in recent
         assert suggestion["participants_counterparty"]
         assert "\u043b\u0438\u0444\u0442" in suggestion["meeting_purpose"].lower()
         if previous_participants is not None:
@@ -223,6 +223,15 @@ def test_representative_suggestions_rotate_counterparties_and_participants(
         previous_participants = suggestion["participants_counterparty"]
         previous_purpose = suggestion["meeting_purpose"]
         previous_result = suggestion["meeting_result"]
+
+    assert len(set(recent)) == 20
+
+    next_cycle = authenticated_client.post(
+        "/api/reports/suggestions/representative",
+        json={"signature": "Ресторан Тест Москва", "recent_counterparties": recent},
+    )
+    assert next_cycle.status_code == 200
+    assert next_cycle.json()["counterparty"] != recent[-1]
 
 
 def test_upload_rejects_fake_pdf(authenticated_client: TestClient) -> None:
