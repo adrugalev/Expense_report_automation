@@ -474,8 +474,8 @@ def test_paddleocr_uses_informative_zones_of_long_receipt(monkeypatch):
             captured["kwargs"] = kwargs
             return [
                 {
-                    "rec_texts": ["ИТОГ", "19810.00", "ненадёжная строка"],
-                    "rec_scores": [0.99, 0.98, 0.1],
+                    "rec_texts": ["ИТОГ", "19810.00", "ИНН 7811789928", "ненадёжная строка"],
+                    "rec_scores": [0.99, 0.98, 0.99, 0.1],
                 }
             ]
 
@@ -483,9 +483,35 @@ def test_paddleocr_uses_informative_zones_of_long_receipt(monkeypatch):
 
     text = parser._try_paddleocr_pil_image(Image.new("RGB", (100, 400), "white"))
 
-    assert text == "ИТОГ\n19810.00"
+    assert text == "ИТОГ\n19810.00\nИНН 7811789928"
     assert captured["shape"] == (184, 100, 3)
     assert captured["kwargs"] == {"text_det_limit_side_len": 1600, "text_det_limit_type": "max"}
+
+
+@pytest.mark.parametrize("fast_text", ["ФД 11493", "ИТОГ\n5030.00"])
+def test_long_receipt_retries_full_image_when_crop_misses_requisites(monkeypatch, fast_text):
+    from PIL import Image
+    import src.receipt_parser as parser
+
+    shapes = []
+
+    class Engine:
+        def predict(self, image, **kwargs):
+            shapes.append(image.shape)
+            text = fast_text if len(shapes) == 1 else "ИТОГ\n-5030.00\nи7811789928\nФД 11493"
+            return [{"rec_texts": text.splitlines(), "rec_scores": [0.99] * len(text.splitlines())}]
+
+    monkeypatch.setattr(parser, "_paddleocr_engine", lambda: Engine())
+    text = parser._try_paddleocr_pil_image(Image.new("RGB", (100, 400)))
+    assert shapes == [(184, 100, 3), (400, 100, 3)]
+    assert extract_amount(text) == Decimal("5030.00")
+    assert extract_inn(text) == "7811789928"
+
+
+def test_frank_network_name_does_not_select_another_branch():
+    from src.address_lookup import _known_restaurant_address
+    assert _known_restaurant_address("Frank by Баста") is None
+    assert extract_address("округ Даниловский.115432. 6-р Братьев Весниных, д.2") == "б-р Братьев Весниных, д. 2"
 
 
 def test_extract_fiscal_drive_number_ignores_leading_ocr_digit():

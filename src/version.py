@@ -3,8 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 
-APP_VERSION_DATE = "29.08.2026"
-APP_VERSION_REVISION = 14
+APP_VERSION_DATE = "10.09.2026"
+APP_VERSION_REVISION = 1
 
 
 @dataclass(frozen=True)
@@ -15,6 +15,14 @@ class VersionHistoryEntry:
 
 
 APP_VERSION_HISTORY = (
+    VersionHistoryEntry(
+        revision=1,
+        date="10.09.2026",
+        changes=(
+            "OCR повторно читает весь длинный чек, если ускоренная обработка пропустила сумму или ИНН.",
+            "Убрана подстановка адреса филиала Frank по одному названию сети; добавлено чтение сокращения бульвара.",
+        ),
+    ),
     VersionHistoryEntry(
         revision=14,
         date="29.08.2026",

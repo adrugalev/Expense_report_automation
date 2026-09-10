@@ -295,7 +295,7 @@ def _merge_verified_address(
 ) -> str | None:
     if source == "проверенная база адресов":
         return verified_address
-    if expense_type in {"ресторан", "подарки"} and should_lookup_address(original_address):
+    if expense_type in {"ресторан", "подарки"} and not original_address:
         return verified_address
     return merge_online_address(verified_address, original_address)
 
@@ -568,6 +568,13 @@ def extract_address(text: str) -> str | None:
     known_address = _clean_address(" ".join(lines))
     if known_address:
         return known_address[:220]
+    for line in lines:
+        boulevard = re.search(
+            r"(?i)\b(?:[б6b]-р|бульвар)\s+([А-Яа-яЁё -]+)[.,]?\s*д[.,]?\s*(\d+[А-Яа-я]?(?:/\d+)?)\b",
+            line,
+        )
+        if boulevard:
+            return f"б-р {boulevard.group(1).strip(' .,')}, д. {boulevard.group(2)}"
     for index, line in enumerate(lines):
         if not _looks_like_legal_entity(line):
             continue
@@ -1008,7 +1015,15 @@ def _try_paddleocr_pil_image(image, *, optimize_receipt: bool = True) -> str:
                 cleaned = _clean_paddleocr_line(str(value))
                 if cleaned and score >= PADDLEOCR_MIN_SCORE:
                     lines.append(cleaned)
-        return "\n".join(lines)
+        text = "\n".join(lines)
+        # Cropping is only a fast path: totals and identity can be in the middle.
+        if optimize_receipt and prepared.size != image.size and (
+            extract_amount(text) is None or extract_inn(text) is None
+        ):
+            full_text = _try_paddleocr_pil_image(image, optimize_receipt=False)
+            if full_text.strip():
+                return full_text
+        return text
     except Exception:
         return ""
 
@@ -1563,7 +1578,6 @@ def _known_restaurant_match(
             "Frank by Баста",
             "г. Москва, ул. Сретенка, д. 24/2 стр. 1",
             (
-                r"frank\s+(?:by|ty)\s+bast[ay]",
                 r"7840107545",
                 r"с[вр]етенк.{0,80}(?:24/2|24\s*/\s*2)",
             ),
@@ -1793,7 +1807,7 @@ def _clean_address(value: str) -> str | None:
     value = re.sub(r"(?i)\b[аa]б\s+(?=Пресненск)", "наб. ", value)
     value = re.sub(r"@\.\s*(\d+)", r"д. \1", value)
     match = re.search(
-        r"(?i)(?:\d{2}\s*[-–]\s*)?(?:\d{6}\s*,\s*)?(?:г\.\s*[A-Za-zА-Яа-яЁё-]+|г\s+[A-Za-zА-Яа-яЁё-]+|город\s+[A-Za-zА-Яа-яЁё-]+|москва|санкт-петербург|пр-кт|проспект|ул\.?|улица|наб\.?|набережная)",
+        r"(?i)\b(?:\d{2}\s*[-–]\s*)?(?:\d{6}\s*,\s*)?(?:г\.\s*[A-Za-zА-Яа-яЁё-]+|г\s+[A-Za-zА-Яа-яЁё-]+|город\s+[A-Za-zА-Яа-яЁё-]+|москва|санкт-петербург|пр-кт|проспект|ул\.?|улица|наб\.?|набережная)",
         value,
     )
     if not match:
