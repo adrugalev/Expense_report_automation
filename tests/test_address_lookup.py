@@ -1,7 +1,12 @@
 import json
 from urllib.parse import parse_qs, urlsplit
 
-from src.address_lookup import lookup_address_online, merge_online_address, should_lookup_address, should_verify_restaurant_fields
+from src.address_lookup import _address_query_hint, lookup_address_online, merge_online_address, should_lookup_address, should_verify_restaurant_fields
+
+
+def test_frank_name_does_not_select_sretenka_branch():
+    for name in ("Frank by Баста", "Frank by Basta", "Frank ty Basty"):
+        assert "Сретенка" not in _address_query_hint(name)
 
 
 def test_should_lookup_ocr_garbage_address():

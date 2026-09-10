@@ -236,7 +236,7 @@ class ReportService:
         data = request.model_dump(exclude={"report_type", "employee_id", "build_mode", "receipt_uploads"})
         restaurant, place = representative_receipt_defaults(request.receipts)
         data["restaurant_name"] = data.get("restaurant_name") or restaurant
-        data["place"] = data.get("place") or place
+        data["place"] = place.strip() or data.get("place") or ""
         signature = self._representative_signature(request, report_id)
         data = complete_representative_fields(data, choose_profile(signature))
         report = RepresentativeExpenseReport(initiator=employee, **data)

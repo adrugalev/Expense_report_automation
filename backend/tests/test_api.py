@@ -423,6 +423,34 @@ def test_generate_representative_reports_in_all_modes(authenticated_client: Test
         assert report["files"], mode
 
 
+def test_representative_download_ignores_stale_form_address(authenticated_client: TestClient) -> None:
+    employee_id = authenticated_client.get("/api/employees").json()[0]["id"]
+    address = "б-р Братьев Весниных, д. 2"
+    generated = authenticated_client.post(
+        "/api/reports/generate",
+        json={
+            "report_type": "representative_expenses",
+            "employee_id": employee_id,
+            "report_date": "2026-09-10",
+            "event_date": "2026-09-09",
+            "receipts": [{"file_name": "frank.pdf", "amount": "5030", "address": address,
+                          "seller": "Frank by Баста", "expense_type": "ресторан"}],
+            "place": "г. Москва, ул. Сретенка, д. 24/2 стр. 1",
+            "restaurant_name": "Frank by Баста",
+            "counterparty": "Контрагент",
+            "meeting_purpose": "Обсуждение проекта",
+            "meeting_result": "Согласованы сроки",
+            "build_mode": "single",
+        },
+    )
+    assert generated.status_code == 201, generated.text
+    download = authenticated_client.get(generated.json()["files"][0]["download_url"])
+    assert download.status_code == 200
+    text = "\n".join(p.text for p in Document(BytesIO(download.content)).paragraphs)
+    assert address in text
+    assert "Сретенка" not in text
+
+
 def test_business_trip_rejects_receipt_outside_trip(authenticated_client: TestClient) -> None:
     employee_id = authenticated_client.get("/api/employees").json()[0]["id"]
     generated = authenticated_client.post(

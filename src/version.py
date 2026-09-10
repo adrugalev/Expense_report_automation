@@ -4,7 +4,7 @@ from dataclasses import dataclass
 
 
 APP_VERSION_DATE = "10.09.2026"
-APP_VERSION_REVISION = 1
+APP_VERSION_REVISION = 2
 
 
 @dataclass(frozen=True)
@@ -15,6 +15,14 @@ class VersionHistoryEntry:
 
 
 APP_VERSION_HISTORY = (
+    VersionHistoryEntry(
+        revision=2,
+        date="10.09.2026",
+        changes=(
+            "При формировании представительского отчёта адрес из чека имеет приоритет над старым адресом в форме.",
+            "Убрана привязка интернет-поиска адреса Frank к конкретному филиалу по названию сети.",
+        ),
+    ),
     VersionHistoryEntry(
         revision=1,
         date="10.09.2026",

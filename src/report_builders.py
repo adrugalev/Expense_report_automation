@@ -484,8 +484,11 @@ def _representative_place_text(report: RepresentativeExpenseReport) -> str:
     receipt_places = _representative_receipt_places(report)
     if len(receipt_places) > 1:
         return f"Места переговоров: {'; '.join(receipt_places)}"
-    if len(receipt_places) == 1 and (not report.restaurant_name.strip() or not report.place.strip()):
-        return f"Место переговоров: {receipt_places[0]}"
+    if len(receipt_places) == 1:
+        receipt = next(item for item in report.receipts if item.seller or item.address)
+        restaurant = report.restaurant_name.strip() or receipt.seller or ""
+        place = (receipt.address or "").strip() or report.place
+        return f"Место переговоров: {_representative_place_item(restaurant, place)}"
     return f"Место переговоров: {_representative_place_item(report.restaurant_name, report.place)}"
 
 

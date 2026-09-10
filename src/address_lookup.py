@@ -332,7 +332,7 @@ def _address_query_hint(value: str) -> str:
         return "Москва Флотская улица 3"
     if "звер" in lower or "звев" in lower or "посад" in lower:
         return "Екатеринбург Посадская улица 28А"
-    if "frank" in lower or "basta" in lower or "basty" in lower or "светен" in lower or "сретен" in lower:
+    if "светен" in lower or "сретен" in lower:
         return "Москва улица Сретенка 24/2"
     if "клешн" in lower or "кнеш" in lower or "хвост" in lower or "хво" in lower or "братислав" in lower or "109451" in lower:
         return "Москва Братиславская улица 12"
