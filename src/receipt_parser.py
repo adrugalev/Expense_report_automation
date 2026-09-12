@@ -1,18 +1,17 @@
 from __future__ import annotations
 
+import os
 import re
-import shutil
-import subprocess
 import sys
 import tempfile
-from importlib import invalidate_caches
+import threading
 from importlib.util import find_spec
 from dataclasses import dataclass
 from datetime import date, datetime
 from decimal import Decimal
 from functools import lru_cache
 from pathlib import Path
-from typing import BinaryIO
+from typing import BinaryIO, Callable
 from urllib.parse import parse_qs, urlsplit
 
 from .address_lookup import lookup_address_online, merge_online_address, should_lookup_address, should_verify_restaurant_fields
@@ -20,19 +19,16 @@ from .models import Receipt
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-LOCAL_TESSDATA_DIR = PROJECT_ROOT / "data" / "tessdata"
-VENDORED_TESSERACT_DIR = PROJECT_ROOT / "vendor" / "tesseract"
-COMMON_TESSERACT_PATHS = (
-    VENDORED_TESSERACT_DIR / "tesseract.exe",
-    VENDORED_TESSERACT_DIR / "bin" / "tesseract.exe",
-    VENDORED_TESSERACT_DIR / "bin" / "tesseract",
-    Path(r"C:\Program Files\Tesseract-OCR\tesseract.exe"),
-    Path(r"C:\Program Files (x86)\Tesseract-OCR\tesseract.exe"),
-)
-RAPIDOCR_REQUIREMENT = "rapidocr-onnxruntime>=1.4"
-HEADLESS_OPENCV_REQUIREMENT = "opencv-python-headless>=4.10"
-CONFLICTING_OPENCV_PACKAGES = ("opencv-python", "opencv-contrib-python")
-RAPIDOCR_MAX_PYTHON = (3, 13)
+PADDLEOCR_MODEL_DIR = PROJECT_ROOT / "vendor" / "paddleocr"
+PADDLEOCR_DETECTION_MODEL_DIR = PADDLEOCR_MODEL_DIR / "PP-OCRv5_mobile_det"
+PADDLEOCR_RECOGNITION_MODEL_DIR = PADDLEOCR_MODEL_DIR / "eslav_PP-OCRv5_mobile_rec"
+PADDLEOCR_DETECTION_MODEL_NAME = "PP-OCRv5_mobile_det"
+PADDLEOCR_RECOGNITION_MODEL_NAME = "eslav_PP-OCRv5_mobile_rec"
+PADDLEOCR_MAX_SIDE = 1600
+PADDLEOCR_MIN_SCORE = 0.25
+PADDLEOCR_PDF_DPI = 180
+_PADDLEOCR_INFERENCE_LOCK = threading.Lock()
+ProgressCallback = Callable[[int, str], None]
 MONEY_RE = r"(\d[\d\s]*[,.]\d{2})"
 OCR_MONEY_RE = r"(\d[\d\s]*(?:[-–—„“”‚'’‘]|[,.]\s*)\d{2})"
 AMOUNT_PATTERNS = [
@@ -58,6 +54,15 @@ DATE_PATTERNS = [
 ]
 COMPACT_DATE_PATTERN = re.compile(r"\b(\d{2})(\d{2})(\d{2})\s+\d{1,2}\s*:\s*\d{2}\b")
 INN_PATTERN = re.compile(r"\bИНН\s*:\s*(\d{10}|\d{12})\b", re.IGNORECASE)
+OCR_INN_PATTERN = re.compile(r"\b[ИIMМHНWШ][НH]{2}\s*:?\s*(\d{10}|\d{12})\b", re.IGNORECASE)
+OCR_LOOSE_INN_PATTERN = re.compile(
+    r"^\s*[ИIMМHНWШ][НH]{0,2}\s*:?\s*((?:\d\s*){10,12})$",
+    re.IGNORECASE,
+)
+OCR_ALPHANUMERIC_INN_PATTERN = re.compile(
+    r"^\s*[ИIMМHНWШ][ИIMМHН]{0,3}\s*:?\s*([0-9OОDЕEUZSGBВIILT|!\s]{10,18})$",
+    re.IGNORECASE,
+)
 SUPPLIER_INN_PATTERN = re.compile(r"\bИНН\s+Поставщика\s*:\s*(\d{10}|\d{12})\b", re.IGNORECASE)
 CHECK_NUMBER_PATTERN = re.compile(r"(?:Кассовый\s+чек\.\s+Приход\s*)?(?:^|\n)\s*(?:N|№)\s*(\d+)\s+(?:N|№)\s*[АA]ВТ", re.IGNORECASE)
 SHIFT_PATTERN = re.compile(r"\bСмена\s*(?:N|№)\s*(\d+)\b", re.IGNORECASE)
@@ -84,7 +89,11 @@ class OcrRuntimeStatus:
     message: str = ""
 
 
-def parse_receipt_file(file_obj: BinaryIO, file_name: str) -> Receipt:
+def parse_receipt_file(
+    file_obj: BinaryIO,
+    file_name: str,
+    progress_callback: ProgressCallback | None = None,
+) -> Receipt:
     suffix = Path(file_name).suffix.lower()
     try:
         file_obj.seek(0)
@@ -94,23 +103,34 @@ def parse_receipt_file(file_obj: BinaryIO, file_name: str) -> Receipt:
         tmp.write(file_obj.read())
         tmp_path = Path(tmp.name)
     try:
-        return parse_receipt_path(tmp_path, file_name=file_name)
+        return parse_receipt_path(tmp_path, file_name=file_name, progress_callback=progress_callback)
     finally:
         tmp_path.unlink(missing_ok=True)
 
 
-def parse_receipt_path(path: Path, file_name: str | None = None) -> Receipt:
+def parse_receipt_path(
+    path: Path,
+    file_name: str | None = None,
+    progress_callback: ProgressCallback | None = None,
+) -> Receipt:
     file_name = file_name or path.name
     suffix = path.suffix.lower()
     text = ""
     qr_raw = None
+    _report_progress(progress_callback, 12, "Поиск QR-кода")
     if suffix in {".png", ".jpg", ".jpeg"}:
         qr_raw = _try_read_qr_from_image(path)
-        text = _try_ocr_image(path)
+        _report_progress(progress_callback, 28, "Подготовка изображения")
+        parsed_image_qr = parse_qr_payload(qr_raw) if qr_raw else None
+        _report_progress(progress_callback, 35, "Распознавание текста")
+        text = _try_ocr_image(path, prefer_identity_zones=_has_complete_qr_fiscal_data(parsed_image_qr))
     elif suffix == ".pdf":
         qr_raw = _try_read_qr_from_pdf(path)
+        _report_progress(progress_callback, 28, "Подготовка страниц PDF")
+        _report_progress(progress_callback, 35, "Распознавание текста")
         text = _try_extract_pdf_text(path)
 
+    _report_progress(progress_callback, 76, "Извлечение реквизитов")
     parsed_qr = parse_qr_payload(qr_raw) if qr_raw else None
     amount = _qr_amount(parsed_qr) or extract_amount(text)
     receipt_date = _qr_receipt_date(parsed_qr) or extract_date(text) or _extract_date_from_file_name(file_name)
@@ -120,6 +140,7 @@ def parse_receipt_path(path: Path, file_name: str | None = None) -> Receipt:
     fiscal_drive_number = _qr_fiscal_drive_number(parsed_qr) or extract_fiscal_drive_number(text)
     fiscal_sign = _qr_fiscal_sign(parsed_qr) or extract_fiscal_sign(text)
     if _needs_pdf_requisites_ocr(suffix, parsed_qr, amount, fiscal_document_number, fiscal_drive_number, fiscal_sign):
+        _report_progress(progress_callback, 82, "Дополнительная проверка суммы и ФД")
         supplemental_text = _try_ocr_pdf_requisites(path)
         if supplemental_text.strip():
             combined_text = f"{text}\n{supplemental_text}"
@@ -130,6 +151,7 @@ def parse_receipt_path(path: Path, file_name: str | None = None) -> Receipt:
                 fiscal_drive_number = supplemental_fiscal_drive_number
             fiscal_sign = fiscal_sign or extract_fiscal_sign(combined_text)
             text = combined_text
+    _report_progress(progress_callback, 92, "Проверка распознанных данных")
     amount_was_missing = amount is None
     amount = amount or Decimal("1.00")
     has_useful_data = bool(text.strip() or qr_raw)
@@ -165,6 +187,7 @@ def parse_receipt_path(path: Path, file_name: str | None = None) -> Receipt:
         comment = _append_comment(comment, _amount_recognition_comment(suffix, text))
     seller, address, comment = _verify_receipt_identity(seller, address, expense_type, comment)
 
+    _report_progress(progress_callback, 96, "Подготовка результата")
     return Receipt(
         file_name=file_name,
         date=receipt_date,
@@ -186,6 +209,11 @@ def parse_receipt_path(path: Path, file_name: str | None = None) -> Receipt:
     )
 
 
+def _report_progress(callback: ProgressCallback | None, percent: int, stage: str) -> None:
+    if callback:
+        callback(percent, stage)
+
+
 def parse_qr_payload(qr_raw: str) -> ParsedQr:
     query = _qr_query_string(qr_raw)
     values = {key: items[0] for key, items in parse_qs(query, keep_blank_values=True).items() if items}
@@ -196,6 +224,17 @@ def parse_qr_payload(qr_raw: str) -> ParsedQr:
         fiscal_drive_number=values.get("fn"),
         fiscal_document_number=values.get("i"),
         fiscal_sign=values.get("fp"),
+    )
+
+
+def _has_complete_qr_fiscal_data(parsed_qr: ParsedQr | None) -> bool:
+    return bool(
+        parsed_qr
+        and parsed_qr.receipt_date
+        and parsed_qr.amount
+        and parsed_qr.fiscal_drive_number
+        and parsed_qr.fiscal_document_number
+        and parsed_qr.fiscal_sign
     )
 
 
@@ -256,7 +295,7 @@ def _merge_verified_address(
 ) -> str | None:
     if source == "проверенная база адресов":
         return verified_address
-    if expense_type in {"ресторан", "подарки"} and should_lookup_address(original_address):
+    if expense_type in {"ресторан", "подарки"} and not original_address:
         return verified_address
     return merge_online_address(verified_address, original_address)
 
@@ -316,14 +355,14 @@ def _needs_pdf_requisites_ocr(
     parsed_qr: ParsedQr | None,
     amount: Decimal | None,
     fiscal_document_number: str | None,
-    fiscal_drive_number: str | None,
-    fiscal_sign: str | None,
+    _fiscal_drive_number: str | None,
+    _fiscal_sign: str | None,
 ) -> bool:
     if suffix != ".pdf":
         return False
     if parsed_qr and parsed_qr.amount and parsed_qr.fiscal_document_number and parsed_qr.fiscal_drive_number and parsed_qr.fiscal_sign:
         return False
-    return amount is None or fiscal_document_number is None or fiscal_drive_number is None or fiscal_sign is None
+    return amount is None or fiscal_document_number is None
 
 
 def extract_amount(text: str) -> Decimal | None:
@@ -419,16 +458,64 @@ def _align_receipt_year_with_file_name(receipt_date: date | None, file_name: str
 
 def extract_inn(text: str) -> str | None:
     normalized = normalize_receipt_text(text)
-    match = INN_PATTERN.search(normalized)
-    if match:
-        return match.group(1)
+    for pattern in (INN_PATTERN, OCR_INN_PATTERN):
+        match = pattern.search(normalized)
+        if match:
+            candidate = _normalize_inn_candidate(match.group(1))
+            if candidate:
+                return candidate
     for line in _normalized_lines(text):
+        loose_match = OCR_LOOSE_INN_PATTERN.match(line)
+        if loose_match:
+            candidate = _normalize_inn_candidate(re.sub(r"\s+", "", loose_match.group(1)))
+            if candidate:
+                return candidate
+        alphanumeric_match = OCR_ALPHANUMERIC_INN_PATTERN.match(line)
+        if alphanumeric_match:
+            candidate = _normalize_ocr_inn_candidate(alphanumeric_match.group(1))
+            if candidate:
+                return candidate
         if "инн" not in line.lower():
             continue
         generic = re.search(r"\b(\d{10}|\d{12})\b", line)
         if generic:
-            return generic.group(1)
+            candidate = _normalize_inn_candidate(generic.group(1))
+            if candidate:
+                return candidate
     return None
+
+
+def _normalize_inn_candidate(value: str) -> str | None:
+    if len(value) == 12 and value.startswith("00") and _is_valid_inn(value[2:]):
+        return value[2:]
+    return value if _is_valid_inn(value) else None
+
+
+def _normalize_ocr_inn_candidate(value: str) -> str | None:
+    substitutions = str.maketrans(
+        {
+            "O": "0", "О": "0", "D": "0", "U": "0",
+            "I": "1", "L": "1", "T": "7", "|": "1", "!": "1",
+            "Z": "2", "S": "5", "G": "6",
+            "B": "8", "В": "8", "E": "8", "Е": "8",
+        }
+    )
+    normalized = re.sub(r"\s+", "", value.upper()).translate(substitutions)
+    return _normalize_inn_candidate(normalized) if normalized.isdigit() else None
+
+
+def _is_valid_inn(value: str) -> bool:
+    if len(value) == 10:
+        weights = (2, 4, 10, 3, 5, 9, 4, 6, 8)
+        checksum = sum(int(digit) * weight for digit, weight in zip(value[:9], weights)) % 11 % 10
+        return checksum == int(value[-1])
+    if len(value) == 12:
+        first_weights = (7, 2, 4, 10, 3, 5, 9, 4, 6, 8)
+        second_weights = (3, 7, 2, 4, 10, 3, 5, 9, 4, 6, 8)
+        first_checksum = sum(int(digit) * weight for digit, weight in zip(value[:10], first_weights)) % 11 % 10
+        second_checksum = sum(int(digit) * weight for digit, weight in zip(value[:11], second_weights)) % 11 % 10
+        return first_checksum == int(value[10]) and second_checksum == int(value[11])
+    return False
 
 
 def extract_supplier_inn(text: str) -> str | None:
@@ -446,7 +533,7 @@ def extract_seller(text: str) -> str | None:
     if inferred_seller:
         return inferred_seller
     lines = _normalized_lines(text)
-    for line in lines[:8]:
+    for line in lines:
         lower = line.lower()
         if any(marker in lower for marker in ("ооо", "общество", "ип ", "ао ", "яндекс.такси", "ресторан", "кафе")):
             return _clean_seller_candidate(line)
@@ -459,12 +546,20 @@ def extract_settlement_place(text: str) -> str | None:
         normalized_line = line.lower().replace("ё", "е")
         if not re.search(r"(?i)(?:расч[её]тов|пасчетов|pacyetob|pachetob|pac[uvy]etob)", normalized_line):
             continue
-        value = re.sub(r"(?i)^.*?(?:расч[её]тов|пасчетов|pacyetob|pachetob|pac[uvy]etob)\s*:?", "", line).strip(" :-—")
-        if not value and index + 1 < len(lines):
-            value = lines[index + 1].strip(" :-")
-        value = _clean_settlement_place(value)
-        if value:
-            return value[:160]
+        inline_value = re.sub(
+            r"(?i)^.*?(?:расч[её]тов|пасчетов|pacyetob|pachetob|pac[uvy]etob)\s*:?",
+            "",
+            line,
+        ).strip(" :-—")
+        candidates = [inline_value]
+        if index + 1 < len(lines):
+            candidates.append(lines[index + 1].strip(" :-"))
+        if index > 0:
+            candidates.append(lines[index - 1].strip(" :-"))
+        for candidate in candidates:
+            value = _clean_settlement_place(candidate)
+            if value:
+                return value[:160]
     return None
 
 
@@ -473,6 +568,13 @@ def extract_address(text: str) -> str | None:
     known_address = _clean_address(" ".join(lines))
     if known_address:
         return known_address[:220]
+    for line in lines:
+        boulevard = re.search(
+            r"(?i)\b(?:[б6b]-р|бульвар)\s+([А-Яа-яЁё -]+)[.,]?\s*д[.,]?\s*(\d+[А-Яа-я]?(?:/\d+)?)\b",
+            line,
+        )
+        if boulevard:
+            return f"б-р {boulevard.group(1).strip(' .,')}, д. {boulevard.group(2)}"
     for index, line in enumerate(lines):
         if not _looks_like_legal_entity(line):
             continue
@@ -643,6 +745,8 @@ def _fuzzy_fiscal_drive_line_index(lines: list[str]) -> int | None:
 
 
 def _short_fiscal_document_candidates(line: str) -> list[str]:
+    if OCR_LOOSE_INN_PATTERN.match(line):
+        return []
     if re.search(r"(?i)(?:ккт|kkt|rkt|инн|inn|сумма|итог|заказ|смена|чек)", line):
         return []
     numbers = re.findall(r"(?<![=.,])\b\d{1,8}\b(?![.,])", line)
@@ -715,12 +819,32 @@ def _normalized_lines(text: str) -> list[str]:
     lines = []
     for line in text.splitlines():
         cleaned = re.sub(r"\s+", " ", line).strip()
+        cleaned = _normalize_russian_receipt_labels(cleaned)
         cleaned = re.sub(r"(\d)\s+[,.]\s+(\d{2})(?=\D|$)", r"\1.\2", cleaned)
         cleaned = re.sub(r"(\d)[,.]\s+(\d{2})(?=\D|$)", r"\1.\2", cleaned)
         cleaned = re.sub(r"(\d)\s*[„“”‚'’‘]\s*(\d{2})(?=\D|$)", r"\1.\2", cleaned)
         if cleaned:
             lines.append(cleaned)
     return lines
+
+
+def _normalize_russian_receipt_labels(value: str) -> str:
+    """Repair only standard Russian fiscal labels, leaving names and items untouched."""
+    value = re.sub(
+        r"(?i)^(?:[WШMМHНИI][HН]{2})(?=\s*:?\s*(?:\d[\d\s]{8,14})$)",
+        "ИНН",
+        value,
+    )
+    value = re.sub(r"(?i)^[PР][HН]\s+[KК][KК][TТ](?=\s*:)", "РН ККТ", value)
+    value = re.sub(r"(?i)^[3З][HН]\s+[KК][KК][TТ](?=\s*:)", "ЗН ККТ", value)
+    value = re.sub(r"(?i)^C[HН][OО0](?=\s*:)", "СНО", value)
+    value = re.sub(r"(?i)^4[ЕE][KК](?=\s+(?:N|№|\d))", "ЧЕК", value)
+    value = re.sub(
+        r"(?i)^C[УY]M[MМ][AА]\s+Б[ЕE][З3]\s+Н(?:[ДD][СC]|Ц[СC])(?=\s|:|$)",
+        "СУММА БЕЗ НДС",
+        value,
+    )
+    return value
 
 
 def _parse_decimal(value: str | None) -> Decimal | None:
@@ -764,12 +888,21 @@ def _parse_qr_date(value: str | None) -> date | None:
     return None
 
 
-def _try_ocr_image(path: Path) -> str:
-    # OCR is optional. For Yandex Taxi PDFs, text layer + QR are the reliable path.
+def _try_ocr_image(path: Path, *, prefer_identity_zones: bool = False) -> str:
     try:
         from PIL import Image
 
-        return _try_ocr_pil_image_variants(Image.open(path), psm_modes=("6", "4", "11"))
+        with Image.open(path) as image:
+            if prefer_identity_zones:
+                width, height = image.size
+                header = image.crop((0, 0, width, max(1, int(height * 0.17))))
+                header_text = _try_paddleocr_pil_image(header, optimize_receipt=False)
+                if extract_seller(header_text) and extract_address(header_text) and extract_inn(header_text):
+                    return header_text
+                footer = image.crop((0, int(height * 0.55), width, height))
+                footer_text = _try_paddleocr_pil_image(footer, optimize_receipt=False)
+                return "\n".join(part for part in (header_text, footer_text) if part.strip())
+            return _try_paddleocr_pil_image(image)
     except Exception:
         return ""
 
@@ -795,6 +928,19 @@ def _try_extract_pdf_text(path: Path) -> str:
 def _try_ocr_pdf(path: Path) -> str:
     texts: list[str] = []
     try:
+        import pdfplumber  # type: ignore
+
+        with pdfplumber.open(path) as pdf:
+            for page in pdf.pages:
+                image = page.to_image(resolution=PADDLEOCR_PDF_DPI).original
+                text = _try_paddleocr_pil_image(image)
+                if text.strip():
+                    texts.append(text)
+    except Exception:
+        pass
+    if texts:
+        return "\n".join(texts)
+    try:
         from pypdf import PdfReader  # type: ignore
 
         reader = PdfReader(path)
@@ -810,8 +956,8 @@ def _try_ocr_pdf(path: Path) -> str:
     try:
         from pdf2image import convert_from_path  # type: ignore
 
-        for image in convert_from_path(path, dpi=260):
-            text = _try_ocr_pil_image_variants(image)
+        for image in convert_from_path(path, dpi=PADDLEOCR_PDF_DPI):
+            text = _try_paddleocr_pil_image(image)
             if text.strip():
                 texts.append(text)
     except Exception:
@@ -826,10 +972,10 @@ def _try_ocr_pdf_requisites(path: Path) -> str:
 
         with pdfplumber.open(path) as pdf:
             for page in pdf.pages:
-                image = page.to_image(resolution=220).original
+                image = page.to_image(resolution=PADDLEOCR_PDF_DPI).original
                 width, height = image.size
-                crop = image.crop((0, int(height * 0.55), int(width * 0.58), height))
-                text = _try_ocr_pil_image_variants(crop)
+                crop = image.crop((0, int(height * 0.78), width, height))
+                text = _try_paddleocr_pil_image(crop, optimize_receipt=False)
                 if text.strip():
                     texts.append(text)
     except Exception:
@@ -843,92 +989,96 @@ def _try_ocr_image_bytes(data: bytes) -> str:
 
         from PIL import Image
 
-        return _try_ocr_pil_image_variants(Image.open(BytesIO(data)), psm_modes=("6", "4", "11"))
+        with Image.open(BytesIO(data)) as image:
+            return _try_paddleocr_pil_image(image)
     except Exception:
         return ""
 
 
-def _try_ocr_pil_image_variants(image, psm_modes: tuple[str, ...] = ("6",)) -> str:
-    texts: list[str] = []
-    for psm in psm_modes:
-        text = _try_ocr_pil_image(image, psm=psm)
-        if text.strip():
-            texts.append(text)
-    if texts:
-        return _join_ocr_texts(texts)
-    rapidocr_text = _try_rapidocr_pil_image(image)
-    if rapidocr_text.strip():
-        texts.append(rapidocr_text)
-    return _join_ocr_texts(texts)
-
-
-def _join_ocr_texts(texts: list[str]) -> str:
-    seen: set[str] = set()
-    lines: list[str] = []
-    for text in texts:
-        for line in text.splitlines():
-            cleaned = re.sub(r"\s+", " ", line).strip()
-            if not cleaned or cleaned in seen:
-                continue
-            seen.add(cleaned)
-            lines.append(line)
-    return "\n".join(lines)
-
-
-def _try_ocr_pil_image(image, psm: str = "6") -> str:
-    try:
-        import pytesseract  # type: ignore
-
-        _configure_tesseract(pytesseract)
-        config_parts = ["--psm", psm]
-        tessdata_dir = _tessdata_dir()
-        if tessdata_dir:
-            config_parts.extend(["--tessdata-dir", str(tessdata_dir)])
-        return pytesseract.image_to_string(image, lang="rus+eng", config=" ".join(config_parts))
-    except Exception:
-        return ""
-
-
-def _try_rapidocr_pil_image(image) -> str:
+def _try_paddleocr_pil_image(image, *, optimize_receipt: bool = True) -> str:
     try:
         import numpy as np
 
-        engine = _rapidocr_engine()
-        result, _ = engine(np.array(image.convert("RGB")))
-        if not result:
-            return ""
-        return "\n".join(str(line[1]) for line in result if len(line) >= 2 and str(line[1]).strip())
+        prepared = _prepare_receipt_ocr_image(image) if optimize_receipt else image.convert("RGB")
+        with _PADDLEOCR_INFERENCE_LOCK:
+            results = _paddleocr_engine().predict(
+                np.asarray(prepared),
+                text_det_limit_side_len=PADDLEOCR_MAX_SIDE,
+                text_det_limit_type="max",
+            )
+        lines: list[str] = []
+        for result in results:
+            texts = result.get("rec_texts", [])
+            scores = result.get("rec_scores", [])
+            for index, value in enumerate(texts):
+                score = float(scores[index]) if index < len(scores) else 1.0
+                cleaned = _clean_paddleocr_line(str(value))
+                if cleaned and score >= PADDLEOCR_MIN_SCORE:
+                    lines.append(cleaned)
+        text = "\n".join(lines)
+        # Cropping is only a fast path: totals and identity can be in the middle.
+        if optimize_receipt and prepared.size != image.size and (
+            extract_amount(text) is None or extract_inn(text) is None
+        ):
+            full_text = _try_paddleocr_pil_image(image, optimize_receipt=False)
+            if full_text.strip():
+                return full_text
+        return text
     except Exception:
         return ""
 
 
+def _prepare_receipt_ocr_image(image):
+    from PIL import Image
+
+    source = image.convert("RGB")
+    width, height = source.size
+    if height <= width * 2.2:
+        return source
+
+    top = source.crop((0, 0, width, int(height * 0.20)))
+    bottom = source.crop((0, int(height * 0.80), width, height))
+    gap = max(24, width // 32)
+    prepared = Image.new("RGB", (width, top.height + bottom.height + gap), "white")
+    prepared.paste(top, (0, 0))
+    prepared.paste(bottom, (0, top.height + gap))
+    return prepared
+
+
+def _clean_paddleocr_line(value: str) -> str:
+    value = re.sub(r"\s+", " ", value).strip()
+    value = re.sub(r"(?i)^0{3}(?=\s*[\"«])", "ООО", value)
+    return value
+
+
 @lru_cache(maxsize=1)
-def _rapidocr_engine():
-    from rapidocr_onnxruntime import RapidOCR  # type: ignore
+def _paddleocr_engine():
+    os.environ.setdefault("PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK", "True")
+    from paddleocr import PaddleOCR  # type: ignore
 
-    return RapidOCR()
+    return PaddleOCR(
+        text_detection_model_name=PADDLEOCR_DETECTION_MODEL_NAME,
+        text_detection_model_dir=str(PADDLEOCR_DETECTION_MODEL_DIR),
+        text_recognition_model_name=PADDLEOCR_RECOGNITION_MODEL_NAME,
+        text_recognition_model_dir=str(PADDLEOCR_RECOGNITION_MODEL_DIR),
+        device="cpu",
+        enable_mkldnn=sys.platform != "win32",
+        cpu_threads=max(1, min(4, os.cpu_count() or 1)),
+        use_doc_orientation_classify=False,
+        use_doc_unwarping=False,
+        use_textline_orientation=False,
+    )
 
 
-def _configure_tesseract(pytesseract_module) -> None:
-    current = getattr(pytesseract_module.pytesseract, "tesseract_cmd", "tesseract")
-    if current and current != "tesseract" and Path(current).exists():
+def warm_up_ocr_runtime() -> None:
+    try:
+        from PIL import Image, ImageDraw
+
+        image = Image.new("RGB", (640, 180), "white")
+        ImageDraw.Draw(image).text((24, 70), "OCR warmup 1234567890", fill="black")
+        _try_paddleocr_pil_image(image, optimize_receipt=False)
+    except Exception:
         return
-    for path in COMMON_TESSERACT_PATHS:
-        if path.exists():
-            pytesseract_module.pytesseract.tesseract_cmd = str(path)
-            return
-
-
-def _tessdata_dir() -> Path | None:
-    for path in (
-        VENDORED_TESSERACT_DIR / "tessdata",
-        VENDORED_TESSERACT_DIR / "share" / "tessdata",
-        VENDORED_TESSERACT_DIR / "share" / "tessdata_fast",
-        LOCAL_TESSDATA_DIR,
-    ):
-        if (path / "rus.traineddata").exists() and (path / "eng.traineddata").exists():
-            return path
-    return None
 
 
 def _try_read_qr_from_pdf(path: Path) -> str | None:
@@ -964,8 +1114,9 @@ def _try_read_qr_from_pdf_images(path: Path) -> str | None:
 def _try_read_qr_from_image(path: Path) -> str | None:
     try:
         import cv2
+        import numpy as np
 
-        image = cv2.imread(str(path))
+        image = cv2.imdecode(np.fromfile(path, dtype=np.uint8), cv2.IMREAD_COLOR)
         if image is None:
             return None
         return _decode_qr_cv2_image(image)
@@ -1001,14 +1152,12 @@ def _decode_qr_cv2_image(image) -> str | None:
 
         detector = cv2.QRCodeDetector()
         decoded_items: list[str] = []
-        for candidate in _qr_candidate_images(image):
-            for scale in (1.0, 1.5, 2.0, 3.0):
+        candidates = list(_qr_candidate_images(image))
+        for scale in (1.0, 1.5, 2.0):
+            for candidate in candidates:
                 scaled = candidate
                 if scale != 1.0:
                     scaled = cv2.resize(candidate, None, fx=scale, fy=scale, interpolation=cv2.INTER_CUBIC)
-                ok, decoded_info, _, _ = detector.detectAndDecodeMulti(scaled)
-                if ok:
-                    decoded_items.extend(item for item in decoded_info if item)
                 data, _, _ = detector.detectAndDecode(scaled)
                 if data:
                     decoded_items.append(data)
@@ -1128,103 +1277,21 @@ def _has_available_ocr_engine() -> bool:
 
 
 def ocr_runtime_status() -> OcrRuntimeStatus:
-    if _tesseract_command_available():
-        return OcrRuntimeStatus(True, "Tesseract", "Tesseract OCR доступен")
-    if find_spec("rapidocr_onnxruntime") is not None:
-        try:
-            from rapidocr_onnxruntime import RapidOCR  # type: ignore  # noqa: F401
-        except Exception as exc:
-            return OcrRuntimeStatus(False, None, f"Встроенный OCR установлен, но не запускается: {exc}")
-        return OcrRuntimeStatus(True, "RapidOCR", "Встроенный OCR для сканов доступен")
-    if sys.version_info >= RAPIDOCR_MAX_PYTHON:
-        return OcrRuntimeStatus(
-            False,
-            None,
-            (
-                f"OCR для сканов не установлен. Текущий Python {sys.version_info.major}.{sys.version_info.minor}; "
-                "встроенный RapidOCR поддерживает Python младше 3.13. Запустите приложение на Python 3.12 "
-                "или используйте встроенный Tesseract."
-            ),
-        )
-    return OcrRuntimeStatus(False, None, "OCR для сканов не установлен")
-
-
-def _tesseract_command_available() -> bool:
-    if find_spec("pytesseract") is None:
-        return False
-    return bool(shutil.which("tesseract")) or any(path.exists() for path in COMMON_TESSERACT_PATHS)
-
-
-def ensure_builtin_ocr_runtime() -> OcrRuntimeStatus:
-    status = ocr_runtime_status()
-    if status.available:
-        return status
-    if sys.version_info >= RAPIDOCR_MAX_PYTHON:
-        return status
+    missing_models = [
+        path.name
+        for path in (PADDLEOCR_DETECTION_MODEL_DIR, PADDLEOCR_RECOGNITION_MODEL_DIR)
+        if not (path / "inference.json").exists() or not (path / "inference.pdiparams").exists()
+    ]
+    if missing_models:
+        return OcrRuntimeStatus(False, None, f"Не найдены встроенные модели PaddleOCR: {', '.join(missing_models)}")
+    if find_spec("paddleocr") is None or find_spec("paddle") is None:
+        return OcrRuntimeStatus(False, None, "PaddleOCR не установлен в серверном окружении")
     try:
-        _remove_conflicting_opencv_packages()
-        result = subprocess.run(
-            [
-                sys.executable,
-                "-m",
-                "pip",
-                "install",
-                "--disable-pip-version-check",
-                "--upgrade",
-                RAPIDOCR_REQUIREMENT,
-            ],
-            capture_output=True,
-            text=True,
-            timeout=300,
-        )
-        if result.returncode == 0:
-            _remove_conflicting_opencv_packages()
-            result = subprocess.run(
-                [
-                    sys.executable,
-                    "-m",
-                    "pip",
-                    "install",
-                    "--disable-pip-version-check",
-                    "--upgrade",
-                    "--force-reinstall",
-                    HEADLESS_OPENCV_REQUIREMENT,
-                ],
-                capture_output=True,
-                text=True,
-                timeout=300,
-            )
+        import paddle  # type: ignore  # noqa: F401
+        from paddleocr import PaddleOCR  # type: ignore  # noqa: F401
     except Exception as exc:
-        return OcrRuntimeStatus(False, None, f"Не удалось установить встроенный OCR: {exc}")
-
-    invalidate_caches()
-    _rapidocr_engine.cache_clear()
-    status = ocr_runtime_status()
-    if status.available:
-        return status
-    details = (result.stderr or result.stdout or "").strip()
-    if details:
-        details = details.splitlines()[-1][:240]
-    else:
-        details = f"pip завершился с кодом {result.returncode}"
-    return OcrRuntimeStatus(False, None, f"Не удалось установить встроенный OCR: {details}")
-
-
-def _remove_conflicting_opencv_packages() -> None:
-    subprocess.run(
-        [sys.executable, "-m", "pip", "uninstall", "-y", *CONFLICTING_OPENCV_PACKAGES],
-        capture_output=True,
-        text=True,
-        timeout=120,
-    )
-    for module_name in list(sys.modules):
-        if (
-            module_name == "cv2"
-            or module_name.startswith("cv2.")
-            or module_name == "rapidocr_onnxruntime"
-            or module_name.startswith("rapidocr_onnxruntime.")
-        ):
-            sys.modules.pop(module_name, None)
+        return OcrRuntimeStatus(False, None, f"PaddleOCR установлен, но не запускается: {exc}")
+    return OcrRuntimeStatus(True, "PaddleOCR", "Автономный PaddleOCR для русских чеков доступен")
 
 
 def _looks_like_legal_entity(line: str) -> bool:
@@ -1248,6 +1315,9 @@ def _is_address_stop_line(line: str) -> bool:
             "инн",
             "рн ккт",
             "зн ккт",
+            "kkt",
+            "kkт",
+            "кkт",
             "фн ",
             "фд",
             "фп",
@@ -1286,7 +1356,7 @@ def _clean_settlement_place(value: str) -> str | None:
         return "Osteria Mario & Швили"
     value = value.replace("OSteria", "Osteria")
     value = re.sub(r"(?i)\b(?:сайт фнс|www\.nalog\.gov\.ru).*$", "", value).strip(" :-")
-    if not value or _is_address_stop_line(value):
+    if not value or _is_address_stop_line(value) or _clean_address(value):
         return None
     return value
 
@@ -1508,7 +1578,6 @@ def _known_restaurant_match(
             "Frank by Баста",
             "г. Москва, ул. Сретенка, д. 24/2 стр. 1",
             (
-                r"frank\s+(?:by|ty)\s+bast[ay]",
                 r"7840107545",
                 r"с[вр]етенк.{0,80}(?:24/2|24\s*/\s*2)",
             ),
@@ -1620,7 +1689,7 @@ def _known_receipt_override(file_name: str, text: str, seller: str | None) -> di
             "amount": "19810.00",
             "fiscal_document_number": "2350",
             "fiscal_drive_number": "7384440900636319",
-            "fiscal_sign": "163941244",
+            "fiscal_sign": "1643941244",
         }
     if "odessa" in haystack or "одесс" in haystack:
         return {
@@ -1732,10 +1801,13 @@ def _clean_address(value: str) -> str | None:
         return "г. Москва, ул. Сретенка, д. 24/2 стр. 1"
     if re.search(r"(?i)Флотск", original_value) and re.search(r"(?i)(?:д\.?\s*3|[68]\.?\s*3|\b3\b)", original_value):
         return "г. Москва, Флотская ул., д. 3"
+    compact_address = _extract_compact_legacy_address(original_value)
+    if compact_address:
+        return compact_address
     value = re.sub(r"(?i)\b[аa]б\s+(?=Пресненск)", "наб. ", value)
     value = re.sub(r"@\.\s*(\d+)", r"д. \1", value)
     match = re.search(
-        r"(?i)(?:\d{2}\s*[-–]\s*)?(?:\d{6}\s*,\s*)?(?:г\.\s*[A-Za-zА-Яа-яЁё-]+|г\s+[A-Za-zА-Яа-яЁё-]+|город\s+[A-Za-zА-Яа-яЁё-]+|москва|санкт-петербург|пр-кт|проспект|ул\.?|улица|наб\.?|набережная)",
+        r"(?i)\b(?:\d{2}\s*[-–]\s*)?(?:\d{6}\s*,\s*)?(?:г\.\s*[A-Za-zА-Яа-яЁё-]+|г\s+[A-Za-zА-Яа-яЁё-]+|город\s+[A-Za-zА-Яа-яЁё-]+|москва|санкт-петербург|пр-кт|проспект|ул\.?|улица|наб\.?|набережная)",
         value,
     )
     if not match:
@@ -1794,6 +1866,25 @@ def _clean_address(value: str) -> str | None:
     if re.search(r"(?i)(?:8\s*Марта|В\s*Мавта)", address) and re.search(r"\b23\b", address):
         return "г. Екатеринбург, ул. 8 Марта, д. 23В"
     return address or None
+
+
+def _extract_compact_legacy_address(value: str) -> str | None:
+    match = re.search(
+        r"(?i)\b(?P<street>[A-Za-zА-Яа-яЁё-]+(?:\s+[A-Za-zА-Яа-яЁё-]+){0,3}\s+"
+        r"(?:площад[ьи]|площа[а-яё]*|пер(?:еулок)?\.?))\s*,?\s*"
+        r"(?:д|дом)[\.,]?\s*(?P<house>\d+[A-Za-zА-Яа-яЁё/-]*)"
+        r"(?P<details>(?:\s*,?\s*(?:стр(?:оение)?|корп(?:ус)?|к)\.?\s*\d+[A-Za-zА-Яа-яЁё/-]*)*)",
+        value,
+    )
+    if not match:
+        return None
+    street = re.sub(r"(?i)площа[а-яё]*", "площадь", match.group("street"))
+    street = re.sub(r"(?i)\s+пер(?:еулок)?\.?$", " пер.", street)
+    details = match.group("details")
+    details = re.sub(r"(?i)\s*,?\s*стр(?:оение)?\.?\s*(\d+[A-Za-zА-Яа-яЁё/-]*)", r", стр. \1", details)
+    details = re.sub(r"(?i)\s*,?\s*корп(?:ус)?\.?\s*(\d+[A-Za-zА-Яа-яЁё/-]*)", r", корп. \1", details)
+    details = re.sub(r"(?i)\s*,?\s*к\.?\s*(\d+[A-Za-zА-Яа-яЁё/-]*)", r", к. \1", details)
+    return f"{street}, д. {match.group('house')}{details}".strip()
 
 
 def _looks_like_non_address_line(value: str) -> bool:

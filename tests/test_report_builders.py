@@ -2,6 +2,7 @@ from datetime import date
 from decimal import Decimal
 from pathlib import Path
 
+import pytest
 from docx import Document
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.oxml.ns import qn
@@ -562,6 +563,30 @@ def test_representative_expense_builder_generates_combined_estimate_and_report(t
     result_num_id = _paragraph_num_id(next(paragraph for paragraph in generated.paragraphs if paragraph.text == "Согласован порядок дальнейшего взаимодействия"))
     attachment_num_id = _paragraph_num_id(next(paragraph for paragraph in generated.paragraphs if paragraph.text == "Фискальный чек №47280"))
     assert len({planned_num_id, result_num_id, attachment_num_id}) == 3
+
+
+@pytest.mark.parametrize("receipt_address", ["б-р Братьев Весниных, д. 2", None, "   "])
+def test_representative_document_uses_receipt_address_with_manual_fallback(tmp_path, receipt_address):
+    old_address = "г. Москва, ул. Сретенка, д. 24/2 стр. 1"
+    report = RepresentativeExpenseReport(
+        initiator=Employee(full_name="Иванов Иван Иванович", position="Менеджер"),
+        report_date=date(2026, 9, 10),
+        event_date=date(2026, 9, 9),
+        place=old_address,
+        restaurant_name="Frank by Баста",
+        counterparty="Контрагент",
+        meeting_purpose="Обсуждение проекта",
+        meeting_result="Согласованы сроки",
+        receipts=[Receipt(file_name="check.pdf", amount=Decimal("5030"),
+                          seller='ООО "ПУТЬ К СЕРДЦУ"', address=receipt_address,
+                          expense_type="ресторан")],
+    )
+    result = RepresentativeExpenseBuilder(TemplateManager(tmp_path / "templates"), tmp_path / "output").build(report)
+    text = "\n".join(paragraph.text for paragraph in Document(result.files[0]).paragraphs)
+    expected_address = (receipt_address or "").strip() or old_address
+    assert f"Место переговоров: ресторан «Frank by Баста» ({expected_address})" in text
+    if (receipt_address or "").strip():
+        assert old_address not in text
 
 
 def test_representative_amount_text_always_uses_rubley_suffix():

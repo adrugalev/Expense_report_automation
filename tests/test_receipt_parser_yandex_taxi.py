@@ -4,10 +4,29 @@ from pathlib import Path
 
 import pytest
 
-from src.receipt_parser import parse_qr_payload, parse_receipt_path
+from src.receipt_parser import _try_read_qr_from_image, parse_qr_payload, parse_receipt_path
 
 
 FIXTURE_DIR = Path("D:/YandexDisk/Разное/Работа/Huaxun/25-09-30 Командировка в Екатеринбург (Technobuild)")
+LEGACY_JPG_DIR = Path("D:/YandexDisk/Разное/Работа/Huaxun/23-10-04 Командировка в Екатеринбург (TechnoBuild)")
+LEGACY_JPG_QR_CASES = (
+    ("Чек 1110 06.10.23.jpg", "1110.00", "206634"),
+    ("Чек 76 04.10.23.jpg", "76.00", "236944"),
+    ("Чек 220 04.10.23.jpg", "220.00", "240164"),
+)
+
+
+@pytest.mark.parametrize(("file_name", "amount", "fiscal_document"), LEGACY_JPG_QR_CASES)
+def test_decode_yandex_taxi_qr_from_unicode_windows_path(file_name: str, amount: str, fiscal_document: str):
+    path = LEGACY_JPG_DIR / file_name
+    if not path.exists():
+        pytest.skip("local Yandex Taxi JPG receipt fixture is unavailable")
+
+    payload = _try_read_qr_from_image(path)
+
+    assert payload is not None
+    assert f"s={amount}" in payload
+    assert f"i={fiscal_document}" in payload
 
 
 @pytest.mark.skipif(not (FIXTURE_DIR / "596_292.pdf").exists(), reason="local Yandex Taxi receipt fixture is unavailable")
@@ -79,3 +98,28 @@ def test_parse_receipt_prefers_complete_qr_and_skips_requisites_ocr(monkeypatch,
     assert receipt.fiscal_document_number == "26132"
     assert receipt.fiscal_drive_number == "7384440900633551"
     assert receipt.fiscal_sign == "4048787786"
+
+
+def test_parse_pdf_skips_supplemental_ocr_when_amount_and_fd_are_present(monkeypatch, tmp_path):
+    pdf_path = tmp_path / "receipt.pdf"
+    pdf_path.write_bytes(b"%PDF-1.4\n")
+
+    monkeypatch.setattr("src.receipt_parser._try_read_qr_from_pdf", lambda path: None)
+    monkeypatch.setattr(
+        "src.receipt_parser._try_extract_pdf_text",
+        lambda path: "ООО Кафе\nИНН: 7704340310\nИТОГО 1200.00\nФД 4601",
+    )
+
+    def fail_requisites_ocr(path):
+        raise AssertionError("OCR fallback must not run only because FN or FP is absent")
+
+    monkeypatch.setattr("src.receipt_parser._try_ocr_pdf_requisites", fail_requisites_ocr)
+
+    progress = []
+    receipt = parse_receipt_path(pdf_path, progress_callback=lambda percent, stage: progress.append((percent, stage)))
+
+    assert receipt.amount == Decimal("1200.00")
+    assert receipt.fiscal_document_number == "4601"
+    assert progress[0] == (12, "Поиск QR-кода")
+    assert progress[-1] == (96, "Подготовка результата")
+    assert [percent for percent, _ in progress] == sorted(percent for percent, _ in progress)

@@ -1,5 +1,4 @@
-tesseract-ocr
-tesseract-ocr-rus
-tesseract-ocr-eng
 poppler-utils
 libzbar0
+libgl1
+libglib2.0-0
