@@ -3,8 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 
-APP_VERSION_DATE = "10.09.2026"
-APP_VERSION_REVISION = 3
+APP_VERSION_DATE = "12.09.2026"
+APP_VERSION_REVISION = 1
 
 
 @dataclass(frozen=True)
@@ -15,6 +15,15 @@ class VersionHistoryEntry:
 
 
 APP_VERSION_HISTORY = (
+    VersionHistoryEntry(
+        revision=1,
+        date="12.09.2026",
+        changes=(
+            "Добавлены BAT-файлы для запуска и остановки локального приложения двойным щелчком.",
+            "Запускатель автоматически проверяет зависимости, обновляет интерфейс и открывает приложение в браузере.",
+            "На рабочий стол добавлен ярлык с фирменной иконкой Huaxun.",
+        ),
+    ),
     VersionHistoryEntry(
         revision=3,
         date="10.09.2026",
