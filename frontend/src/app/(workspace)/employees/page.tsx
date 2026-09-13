@@ -29,9 +29,9 @@ export default function EmployeesPage() {
   const [passwordAccount, setPasswordAccount] = useState<EmployeeAccount | null>(null);
   const save = useMutation({
     mutationFn: (data: EmployeeFormData) => apiFetch<Employee>(selected ? `/employees/${selected.id}` : "/employees", { method: selected ? "PUT" : "POST", body: JSON.stringify(apiPayload(data)) }),
-    onSuccess: () => { client.invalidateQueries({ queryKey: ["employees"] }); client.invalidateQueries({ queryKey: ["employee-accounts"] }); client.invalidateQueries({ queryKey: ["dashboard"] }); setOpen(false); toast.success("Сотрудник сохранён"); },
+    onSuccess: () => { client.invalidateQueries({ queryKey: ["employees"] }); client.invalidateQueries({ queryKey: ["company-participants"] }); client.invalidateQueries({ queryKey: ["employee-accounts"] }); client.invalidateQueries({ queryKey: ["dashboard"] }); setOpen(false); toast.success("Сотрудник сохранён"); },
   });
-  const remove = useMutation({ mutationFn: (employee: Employee) => apiFetch<void>(`/employees/${employee.id}`, { method: "DELETE" }), onSuccess: () => { client.invalidateQueries({ queryKey: ["employees"] }); client.invalidateQueries({ queryKey: ["employee-accounts"] }); toast.success("Сотрудник удалён"); } });
+  const remove = useMutation({ mutationFn: (employee: Employee) => apiFetch<void>(`/employees/${employee.id}`, { method: "DELETE" }), onSuccess: () => { client.invalidateQueries({ queryKey: ["employees"] }); client.invalidateQueries({ queryKey: ["company-participants"] }); client.invalidateQueries({ queryKey: ["employee-accounts"] }); toast.success("Сотрудник удалён"); } });
   const employees = query.data ?? [];
   return (
     <>

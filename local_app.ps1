@@ -39,12 +39,17 @@ function Stop-AppProcesses {
     }
 
     $record = Get-Content -Raw $PidFile | ConvertFrom-Json
-    foreach ($processId in @($record.frontend_pid, $record.backend_pid)) {
+    $managedProcesses = @(
+        @{ process_id = $record.frontend_pid; command_pattern = "standalone.server\.js" },
+        @{ process_id = $record.backend_pid; command_pattern = "backend\.app\.main:app" }
+    )
+    foreach ($managedProcess in $managedProcesses) {
+        $processId = $managedProcess.process_id
         if (-not $processId) {
             continue
         }
-        $process = Get-Process -Id $processId -ErrorAction SilentlyContinue
-        if ($process) {
+        $process = Get-CimInstance Win32_Process -Filter "ProcessId = $processId" -ErrorAction SilentlyContinue
+        if ($process -and $process.CommandLine -match $managedProcess.command_pattern) {
             & taskkill.exe /PID $processId /T /F 2>$null | Out-Null
         }
     }
@@ -93,20 +98,24 @@ function Ensure-PythonDependencies([string]$Python) {
 }
 
 function Ensure-FrontendBuild {
-    $node = Get-Command node.exe -ErrorAction SilentlyContinue
-    if (-not $node) {
+    $nodeCommand = Get-Command node.exe -ErrorAction SilentlyContinue
+    $nodePath = if ($nodeCommand) { $nodeCommand.Source } else { $null }
+    if (-not $nodePath) {
+        $nodeCandidates = @(
+            (Join-Path $env:ProgramFiles "nodejs\node.exe"),
+            (Join-Path $env:LOCALAPPDATA "Programs\nodejs\node.exe")
+        )
+        $nodePath = $nodeCandidates | Where-Object { Test-Path $_ } | Select-Object -First 1
+    }
+    if (-not $nodePath) {
         throw "Node.js was not found. Install Node.js 22 or newer."
     }
 
-    $pnpm = Get-Command pnpm.cmd -ErrorAction SilentlyContinue
-    if (-not $pnpm) {
-        throw "pnpm was not found. Run 'corepack enable' once and try again."
-    }
-
     $frontendDir = Join-Path $ProjectRoot "frontend"
-    if (-not (Test-Path (Join-Path $frontendDir "node_modules"))) {
+    $needsInstall = -not (Test-Path (Join-Path $frontendDir "node_modules"))
+    if ($needsInstall) {
         Write-Host "Installing frontend components for the first launch..."
-        & $pnpm.Source install --frozen-lockfile --dir $frontendDir | Out-Host
+        Invoke-Pnpm @("install", "--frozen-lockfile", "--dir", $frontendDir)
         if ($LASTEXITCODE -ne 0) { throw "Failed to install frontend dependencies." }
     }
 
@@ -127,7 +136,7 @@ function Ensure-FrontendBuild {
         Write-Host "Building the current interface..."
         Push-Location $frontendDir
         try {
-            & $pnpm.Source build | Out-Host
+            Invoke-Pnpm @("build")
             if ($LASTEXITCODE -ne 0) { throw "Frontend build failed." }
         }
         finally {
@@ -142,7 +151,22 @@ function Ensure-FrontendBuild {
     Copy-Item -Path (Join-Path $frontendDir ".next\static\*") -Destination $standaloneStatic -Recurse -Force
     Copy-Item -Path (Join-Path $frontendDir "public\*") -Destination $standalonePublic -Recurse -Force
 
-    return $node.Source
+    return $nodePath
+}
+
+function Invoke-Pnpm([string[]]$PnpmArguments) {
+    $pnpm = Get-Command pnpm.cmd -ErrorAction SilentlyContinue
+    if ($pnpm) {
+        & $pnpm.Source @PnpmArguments | Out-Host
+        return
+    }
+
+    $corepackCommand = Get-Command corepack.cmd -ErrorAction SilentlyContinue
+    $corepackPath = if ($corepackCommand) { $corepackCommand.Source } else { Join-Path $env:ProgramFiles "nodejs\corepack.cmd" }
+    if (-not (Test-Path $corepackPath)) {
+        throw "The interface needs rebuilding, but pnpm and corepack were not found. Install Node.js 22 or newer."
+    }
+    & $corepackPath pnpm @PnpmArguments | Out-Host
 }
 
 if ($Stop) {

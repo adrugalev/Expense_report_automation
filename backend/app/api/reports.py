@@ -94,7 +94,7 @@ def list_reports(
     offset: int = Query(default=0, ge=0),
     session: Session = Depends(get_db),
     settings: Settings = Depends(get_settings),
-    user: UserRecord = Depends(require_roles("admin")),
+    user: UserRecord = Depends(require_roles("admin", "employee")),
 ) -> ReportListResponse:
     return ReportService(session, settings).list(user, limit=limit, offset=offset)
 

@@ -31,8 +31,9 @@ function SelectionCheckbox({ checked, indeterminate = false, label, onChange }: 
   );
 }
 
-export function ReportTable({ reports, deletingId, selectedIds, onToggle, onToggleAll, onDelete }: {
+export function ReportTable({ reports, canDelete, deletingId, selectedIds, onToggle, onToggleAll, onDelete }: {
   reports: ReportSummary[];
+  canDelete: boolean;
   deletingId?: string;
   selectedIds: Set<string>;
   onToggle: (reportId: string) => void;
@@ -42,13 +43,13 @@ export function ReportTable({ reports, deletingId, selectedIds, onToggle, onTogg
   const allSelected = reports.length > 0 && reports.every((report) => selectedIds.has(report.id));
   const someSelected = reports.some((report) => selectedIds.has(report.id));
   const columns = [
-    column.display({ id: "select", header: () => <SelectionCheckbox checked={allSelected} indeterminate={someSelected && !allSelected} label={allSelected ? "Снять выбор со всех отчётов" : "Выбрать все отчёты"} onChange={onToggleAll} />, cell: ({ row }) => <SelectionCheckbox checked={selectedIds.has(row.original.id)} label={`Выбрать отчёт ${reportTypeLabels[row.original.report_type]}`} onChange={() => onToggle(row.original.id)} /> }),
+    ...(canDelete ? [column.display({ id: "select", header: () => <SelectionCheckbox checked={allSelected} indeterminate={someSelected && !allSelected} label={allSelected ? "Снять выбор со всех отчётов" : "Выбрать все отчёты"} onChange={onToggleAll} />, cell: ({ row }) => <SelectionCheckbox checked={selectedIds.has(row.original.id)} label={`Выбрать отчёт ${reportTypeLabels[row.original.report_type]}`} onChange={() => onToggle(row.original.id)} /> })] : []),
     column.accessor("created_at", { header: "Дата", cell: ({ getValue }) => new Intl.DateTimeFormat("ru-RU", { dateStyle: "medium", timeStyle: "short" }).format(new Date(getValue())) }),
     column.accessor("report_type", { header: "Тип", cell: ({ getValue }) => reportTypeLabels[getValue()] }),
     column.accessor("employee_name", { header: "Инициатор", cell: ({ getValue }) => getValue() || "—" }),
     column.accessor("total_amount", { header: "Сумма", cell: ({ getValue }) => `${Number(getValue()).toLocaleString("ru-RU", { minimumFractionDigits: 2 })} ₽` }),
     column.accessor("status", { header: "Статус", cell: ({ getValue }) => <StatusBadge status={getValue()} /> }),
-    column.display({ id: "actions", cell: ({ row }) => <div className="flex justify-end gap-1"><Link className="inline-flex size-8 items-center justify-center rounded hover:bg-surface-muted" href={`/reports/${row.original.id}`} aria-label="Открыть отчёт"><ChevronRight className="size-4" /></Link><ConfirmDialog title="Удалить отчёт?" description={`Запись «${reportTypeLabels[row.original.report_type]}» и все сформированные документы будут удалены без возможности восстановления.`} onConfirm={() => onDelete(row.original)} trigger={<Button size="icon" variant="ghost" disabled={deletingId === row.original.id} aria-label="Удалить отчёт"><Trash2 className="size-4 text-danger" /></Button>} /></div> }),
+    column.display({ id: "actions", cell: ({ row }) => <div className="flex justify-end gap-1"><Link className="inline-flex size-8 items-center justify-center rounded hover:bg-surface-muted" href={`/reports/${row.original.id}`} aria-label="Открыть отчёт"><ChevronRight className="size-4" /></Link>{canDelete ? <ConfirmDialog title="Удалить отчёт?" description={`Запись «${reportTypeLabels[row.original.report_type]}» и все сформированные документы будут удалены без возможности восстановления.`} onConfirm={() => onDelete(row.original)} trigger={<Button size="icon" variant="ghost" disabled={deletingId === row.original.id} aria-label="Удалить отчёт"><Trash2 className="size-4 text-danger" /></Button>} /> : null}</div> }),
   ];
   const table = useReactTable({ data: reports, columns, getCoreRowModel: getCoreRowModel() });
   return (

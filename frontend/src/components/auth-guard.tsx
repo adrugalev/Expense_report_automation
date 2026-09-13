@@ -10,7 +10,7 @@ export function AuthGuard({ children }: { children: React.ReactNode }) {
   const router = useRouter();
   const pathname = usePathname();
   const query = useUser();
-  const employeeRouteAllowed = pathname === "/reports/new" || /^\/reports\/[0-9a-f-]{36}$/.test(pathname);
+  const employeeRouteAllowed = pathname === "/reports/new" || pathname === "/reports/history" || /^\/reports\/[0-9a-f-]{36}$/.test(pathname);
   useEffect(() => {
     if (query.error instanceof ApiError && query.error.status === 401) router.replace("/login");
     if (query.data?.role === "employee" && !employeeRouteAllowed) router.replace("/reports/new");

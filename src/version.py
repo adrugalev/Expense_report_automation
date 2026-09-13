@@ -3,8 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 
-APP_VERSION_DATE = "12.09.2026"
-APP_VERSION_REVISION = 1
+APP_VERSION_DATE = "13.09.2026"
+APP_VERSION_REVISION = 2
 
 
 @dataclass(frozen=True)
@@ -15,6 +15,24 @@ class VersionHistoryEntry:
 
 
 APP_VERSION_HISTORY = (
+    VersionHistoryEntry(
+        revision=2,
+        date="13.09.2026",
+        changes=(
+            "Сотрудникам открыт полный список участников со стороны компании с ФИО и должностями.",
+            "Раздел «История» доступен каждому сотруднику и показывает только созданные им отчёты.",
+            "Администратор по-прежнему видит и может удалять отчёты всех сотрудников.",
+        ),
+    ),
+    VersionHistoryEntry(
+        revision=1,
+        date="13.09.2026",
+        changes=(
+            "Исправлен запуск приложения после перезагрузки Windows без pnpm в системном PATH.",
+            "Готовая сборка интерфейса запускается без инструментов разработки, а pnpm требуется только для обновления исходного кода.",
+            "Остановка приложения проверяет принадлежность сохранённых процессов перед их завершением.",
+        ),
+    ),
     VersionHistoryEntry(
         revision=1,
         date="12.09.2026",

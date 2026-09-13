@@ -122,6 +122,10 @@ export function ReportForm() {
   const { data: user } = useUser();
   const draftKey = `${draftKeyPrefix}:${user?.id ?? "anonymous"}`;
   const employeesQuery = useQuery({ queryKey: ["employees"], queryFn: () => apiFetch<Employee[]>("/employees") });
+  const participantsQuery = useQuery({
+    queryKey: ["company-participants"],
+    queryFn: () => apiFetch<Array<Pick<Employee, "id" | "full_name" | "position">>>("/employees/participants"),
+  });
   const typesQuery = useQuery({ queryKey: ["report-types"], queryFn: () => apiFetch<ReportTypeOption[]>("/reports/types") });
   const form = useForm<FormValues>({ resolver: zodResolver(schema), defaultValues: defaults });
   const [receipts, setReceipts] = useState<Receipt[]>([]);
@@ -134,6 +138,7 @@ export function ReportForm() {
   const reportType = form.watch("report_type");
   const selectedEmployee = form.watch("employee_id");
   const employees = useMemo(() => employeesQuery.data ?? [], [employeesQuery.data]);
+  const participantEmployees = useMemo(() => participantsQuery.data ?? [], [participantsQuery.data]);
   const isEmployee = user?.role === "employee";
   const selfEmployee = employees.find((employee) => employee.id === user?.employee_id);
 
@@ -321,7 +326,7 @@ export function ReportForm() {
           <Field label="Результат встречи"><Textarea {...form.register("meeting_result")} value={form.watch("meeting_result")} /></Field>
         </div>
         <div className="space-y-5">
-          <fieldset><legend className="text-sm font-medium">Участники со стороны компании</legend><div className="mt-2 space-y-1 rounded-lg border p-2">{employees.map((employee) => <label key={employee.id} className="flex cursor-pointer items-start gap-2 rounded-md px-2 py-2 text-sm hover:bg-surface-muted"><input type="checkbox" className="mt-0.5 size-4 accent-primary" checked={companyParticipants.includes(employee.full_name)} onChange={(event) => setCompanyParticipants((current) => event.target.checked ? [...current, employee.full_name] : current.filter((name) => name !== employee.full_name))} /><span><span className="block font-medium">{employee.full_name}</span><span className="text-xs text-muted">{employee.position}</span></span></label>)}</div></fieldset>
+          <fieldset><legend className="text-sm font-medium">Участники со стороны компании</legend><div className="mt-2 space-y-1 rounded-lg border p-2">{participantEmployees.map((employee) => <label key={employee.id} className="flex cursor-pointer items-start gap-2 rounded-md px-2 py-2 text-sm hover:bg-surface-muted"><input type="checkbox" className="mt-0.5 size-4 accent-primary" checked={companyParticipants.includes(employee.full_name)} onChange={(event) => setCompanyParticipants((current) => event.target.checked ? [...current, employee.full_name] : current.filter((name) => name !== employee.full_name))} /><span><span className="block font-medium">{employee.full_name}</span><span className="text-xs text-muted">{employee.position}</span></span></label>)}</div></fieldset>
           <Field label="Участники со стороны контрагента"><Textarea {...form.register("participants_counterparty")} value={form.watch("participants_counterparty")} placeholder="По одному участнику на строку" /></Field>
           <Field label="Способ формирования"><select {...form.register("build_mode")} className="h-10 w-full rounded-md border bg-surface px-3 text-sm"><option value="single">Один документ по всем чекам</option><option value="per_receipt">Отдельный документ на каждый чек</option><option value="per_receipt_different_companies">Отдельно по чекам и организациям</option></select></Field>
           <Tooltip>
@@ -343,7 +348,7 @@ export function ReportForm() {
 
     <section className="flex flex-col gap-3 border-t py-5 sm:flex-row sm:items-center sm:justify-between">
       <div className="text-sm"><span className="text-muted">Чеков:</span> <strong>{receipts.length}</strong><span className="mx-2 text-border">|</span><span className="text-muted">Итого:</span> <strong>{total.toLocaleString("ru-RU", { minimumFractionDigits: 2 })} ₽</strong></div>
-      <div className="flex gap-2"><Button type="button" variant="secondary" onClick={() => { const employeeId = user?.employee_id ?? ""; const employee = employees.find((item) => item.id === employeeId); form.reset({ ...defaults, employee_id: employeeId }); setReceipts([]); setUploads([]); setCompanyParticipants(employee ? [employee.full_name] : []); autoSelectedParticipantId.current = employee?.id ?? null; recentCounterparties.current = []; purposesByReportType.current = { business_trip: "", gifts: "" }; localStorage.removeItem(draftKey); }}>Очистить</Button><Button type="submit" disabled={generateMutation.isPending || employeesQuery.isLoading}>{generateMutation.isPending ? <Loader2 className="size-4 animate-spin" /> : <FileCheck2 className="size-4" />}Сформировать документы</Button></div>
+      <div className="flex gap-2"><Button type="button" variant="secondary" onClick={() => { const employeeId = user?.employee_id ?? ""; const employee = employees.find((item) => item.id === employeeId); form.reset({ ...defaults, employee_id: employeeId }); setReceipts([]); setUploads([]); setCompanyParticipants(employee ? [employee.full_name] : []); autoSelectedParticipantId.current = employee?.id ?? null; recentCounterparties.current = []; purposesByReportType.current = { business_trip: "", gifts: "" }; localStorage.removeItem(draftKey); }}>Очистить</Button><Button type="submit" disabled={generateMutation.isPending || employeesQuery.isLoading || participantsQuery.isLoading}>{generateMutation.isPending ? <Loader2 className="size-4 animate-spin" /> : <FileCheck2 className="size-4" />}Сформировать документы</Button></div>
     </section>
   </form>;
 }

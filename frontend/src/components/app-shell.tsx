@@ -21,6 +21,7 @@ const adminNavigation = [
 
 const employeeNavigation = [
   { href: "/reports/new", label: "Новый отчёт", icon: FilePlus2 },
+  { href: "/reports/history", label: "История", icon: FileClock },
 ];
 
 export function AppShell({ children }: { children: React.ReactNode }) {

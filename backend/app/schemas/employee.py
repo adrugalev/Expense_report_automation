@@ -32,3 +32,9 @@ class EmployeeUpdate(EmployeeBase):
 
 class EmployeeResponse(EmployeeBase):
     id: str
+
+
+class EmployeeParticipantResponse(BaseModel):
+    id: str
+    full_name: str
+    position: str

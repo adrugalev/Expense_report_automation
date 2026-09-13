@@ -6,11 +6,22 @@ from sqlalchemy.orm import Session
 from ..database import get_db
 from ..database_models import UserRecord
 from ..dependencies import get_current_user, require_roles
-from ..schemas.employee import EmployeeCreate, EmployeeResponse, EmployeeUpdate
+from ..schemas.employee import EmployeeCreate, EmployeeParticipantResponse, EmployeeResponse, EmployeeUpdate
 from ..services.employee_service import EmployeeConflictError, EmployeeNotFoundError, EmployeeService
 
 
 router = APIRouter(prefix="/employees", tags=["employees"])
+
+
+@router.get("/participants", response_model=list[EmployeeParticipantResponse])
+def list_company_participants(
+    session: Session = Depends(get_db),
+    _user: UserRecord = Depends(require_roles("admin", "employee")),
+) -> list[EmployeeParticipantResponse]:
+    return [
+        EmployeeParticipantResponse(id=employee.id, full_name=employee.full_name, position=employee.position)
+        for employee in EmployeeService(session).list()
+    ]
 
 
 @router.get("", response_model=list[EmployeeResponse])

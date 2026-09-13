@@ -112,11 +112,16 @@ def test_admin_manages_employee_password_and_employee_access_is_restricted(
     assert login.json()["user"]["employee_id"] == "baranova"
 
     assert authenticated_client.get("/api/dashboard").status_code == 403
-    assert authenticated_client.get("/api/reports").status_code == 403
+    employee_history = authenticated_client.get("/api/reports")
+    assert employee_history.status_code == 200
     assert authenticated_client.get("/api/accounts/employees").status_code == 403
     visible_employees = authenticated_client.get("/api/employees")
     assert visible_employees.status_code == 200
     assert [item["id"] for item in visible_employees.json()] == ["baranova"]
+    participants = authenticated_client.get("/api/employees/participants")
+    assert participants.status_code == 200
+    assert {item["id"] for item in participants.json()} == {item["id"] for item in employees}
+    assert all(set(item) == {"id", "full_name", "position"} for item in participants.json())
 
     report_date = date.today().isoformat()
     base_request = {
@@ -155,6 +160,8 @@ def test_admin_manages_employee_password_and_employee_access_is_restricted(
     assert report["employee_id"] == "baranova"
     assert authenticated_client.get(f"/api/reports/{report['id']}").status_code == 200
     assert authenticated_client.delete(f"/api/reports/{report['id']}").status_code == 403
+    employee_history = authenticated_client.get("/api/reports")
+    assert any(item["id"] == report["id"] for item in employee_history.json()["items"])
 
     assert authenticated_client.post("/api/auth/logout").status_code == 204
     admin_login = authenticated_client.post(
@@ -162,9 +169,26 @@ def test_admin_manages_employee_password_and_employee_access_is_restricted(
         json={"email": "aleksandr.drugalev@h-xgroup.com", "password": "TestPassword123!"},
     )
     assert admin_login.status_code == 200
+    other_report = authenticated_client.post(
+        "/api/reports/generate",
+        json={**base_request, "employee_id": other_employee["id"]},
+    )
+    assert other_report.status_code == 201, other_report.text
     history = authenticated_client.get("/api/reports")
     assert history.status_code == 200
     assert any(item["id"] == report["id"] for item in history.json()["items"])
+    assert any(item["id"] == other_report.json()["id"] for item in history.json()["items"])
+
+    assert authenticated_client.post("/api/auth/logout").status_code == 204
+    assert authenticated_client.post(
+        "/api/auth/login",
+        json={"email": own_employee["email"], "password": changed_password},
+    ).status_code == 200
+    filtered_history = authenticated_client.get("/api/reports")
+    filtered_ids = {item["id"] for item in filtered_history.json()["items"]}
+    assert report["id"] in filtered_ids
+    assert other_report.json()["id"] not in filtered_ids
+    assert authenticated_client.get(f"/api/reports/{other_report.json()['id']}").status_code == 404
 
 
 def test_employee_crud(authenticated_client: TestClient) -> None:

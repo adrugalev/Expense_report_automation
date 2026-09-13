@@ -12,11 +12,14 @@ import { PageHeader } from "@/components/page-header";
 import { EmptyState, ErrorState, LoadingState } from "@/components/states";
 import { ReportTable } from "@/components/report-table";
 import { ConfirmDialog } from "@/components/confirm-dialog";
+import { useUser } from "@/hooks/use-user";
 
 export default function ReportHistoryPage() {
   const client = useQueryClient();
+  const { data: user } = useUser();
+  const canDelete = user?.role === "admin";
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
-  const query = useQuery({ queryKey: ["reports"], queryFn: () => apiFetch<ReportList>("/reports?limit=200") });
+  const query = useQuery({ queryKey: ["reports", user?.id], queryFn: () => apiFetch<ReportList>("/reports?limit=200"), enabled: Boolean(user) });
   const remove = useMutation({
     mutationFn: (report: ReportSummary) => apiFetch<void>(`/reports/${report.id}`, { method: "DELETE" }),
     onSuccess: (_, report) => {
@@ -69,7 +72,7 @@ export default function ReportHistoryPage() {
 
   return (
     <>
-      <PageHeader title="История" description="Сформированные комплекты доступны для повторного скачивания." action={reports.length ?
+      <PageHeader title="История" description={canDelete ? "Все сформированные комплекты доступны для повторного скачивания." : "Ваши сформированные комплекты доступны для повторного скачивания."} action={canDelete && reports.length ?
         <ConfirmDialog
           title="Удалить выбранные отчёты?"
           description={`Будут удалены выбранные отчёты (${selectedReportIds.length}) и все сформированные документы. Это действие нельзя отменить.`}
@@ -77,7 +80,7 @@ export default function ReportHistoryPage() {
           trigger={<Button variant="danger" size="sm" className="gap-1.5 px-2.5" disabled={!selectedReportIds.length || removeSelected.isPending}><Trash2 className="size-3.5" />Удалить выбранные{selectedReportIds.length ? ` (${selectedReportIds.length})` : ""}</Button>}
         />
       : undefined} />
-      {query.isLoading ? <LoadingState rows={7} /> : query.error ? <ErrorState message={query.error.message} retry={() => query.refetch()} /> : reports.length ? <ReportTable reports={reports} deletingId={remove.variables?.id} selectedIds={selectedIds} onToggle={toggleReport} onToggleAll={toggleAll} onDelete={(report) => remove.mutate(report)} /> : <EmptyState title="История пуста" description="Здесь появятся успешно сформированные и незавершённые отчёты." action={<Button asChild><Link href="/reports/new">Создать первый отчёт</Link></Button>} />}
+      {query.isLoading ? <LoadingState rows={7} /> : query.error ? <ErrorState message={query.error.message} retry={() => query.refetch()} /> : reports.length ? <ReportTable reports={reports} canDelete={canDelete} deletingId={remove.variables?.id} selectedIds={selectedIds} onToggle={toggleReport} onToggleAll={toggleAll} onDelete={(report) => remove.mutate(report)} /> : <EmptyState title="История пуста" description="Здесь появятся успешно сформированные и незавершённые отчёты." action={<Button asChild><Link href="/reports/new">Создать первый отчёт</Link></Button>} />}
     </>
   );
 }
