@@ -3,8 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 
-APP_VERSION_DATE = "13.09.2026"
-APP_VERSION_REVISION = 2
+APP_VERSION_DATE = "18.09.2026"
+APP_VERSION_REVISION = 1
 
 
 @dataclass(frozen=True)
@@ -15,6 +15,14 @@ class VersionHistoryEntry:
 
 
 APP_VERSION_HISTORY = (
+    VersionHistoryEntry(
+        revision=1,
+        date="18.09.2026",
+        changes=(
+            "Локальный ярлык автоматически открывает приложение под учётной записью администратора без ввода пароля.",
+            "Автоматический вход действует только в специальном локальном режиме запуска; обычный и сетевой запуск остаются защищены авторизацией.",
+        ),
+    ),
     VersionHistoryEntry(
         revision=2,
         date="13.09.2026",

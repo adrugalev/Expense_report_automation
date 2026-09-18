@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections.abc import Callable
 
 from fastapi import Depends, HTTPException, Request, status
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from .config import Settings, get_settings
@@ -16,6 +17,16 @@ def get_current_user(
     session: Session = Depends(get_db),
     settings: Settings = Depends(get_settings),
 ) -> UserRecord:
+    if settings.environment == "local-desktop" and settings.local_auth_bypass:
+        local_email = (settings.local_auth_email or settings.admin_email).strip().lower()
+        local_user = session.scalar(select(UserRecord).where(UserRecord.email == local_email))
+        if not local_user or not local_user.is_active:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Локальная учётная запись не найдена или отключена",
+            )
+        return local_user
+
     token = request.cookies.get(settings.cookie_name)
     authorization = request.headers.get("Authorization", "")
     if not token and authorization.lower().startswith("bearer "):

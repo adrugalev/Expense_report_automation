@@ -8,12 +8,41 @@ from docx import Document
 from fastapi.testclient import TestClient
 from pypdf import PdfWriter
 
+from backend.app.config import get_settings
+
 
 def test_health_and_openapi_are_public(client: TestClient) -> None:
     assert client.get("/api/health").json() == {"status": "ok"}
     openapi = client.get("/openapi.json")
     assert openapi.status_code == 200
     assert "/api/reports/generate" in openapi.json()["paths"]
+
+
+def test_auth_is_required_outside_local_desktop_mode(client: TestClient) -> None:
+    client.cookies.clear()
+    response = client.get("/api/auth/me")
+    assert response.status_code == 401
+
+
+def test_local_desktop_mode_uses_configured_admin_without_cookie(client: TestClient) -> None:
+    settings = get_settings()
+    original_environment = settings.environment
+    original_bypass = settings.local_auth_bypass
+    original_email = settings.local_auth_email
+    client.cookies.clear()
+    try:
+        settings.environment = "local-desktop"
+        settings.local_auth_bypass = True
+        settings.local_auth_email = "aleksandr.drugalev@h-xgroup.com"
+        response = client.get("/api/auth/me")
+        assert response.status_code == 200
+        assert response.json()["role"] == "admin"
+        assert response.json()["email"] == "aleksandr.drugalev@h-xgroup.com"
+    finally:
+        settings.environment = original_environment
+        settings.local_auth_bypass = original_bypass
+        settings.local_auth_email = original_email
+        client.cookies.clear()
 
 
 def test_login_dashboard_and_seeded_employees(authenticated_client: TestClient) -> None:

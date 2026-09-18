@@ -209,6 +209,9 @@ foreach ($log in @($backendOut, $backendErr, $frontendOut, $frontendErr)) {
 }
 
 $env:PYTHONPATH = $ProjectRoot
+$env:ENVIRONMENT = "local-desktop"
+$env:LOCAL_AUTH_BYPASS = "true"
+$env:LOCAL_AUTH_EMAIL = "aleksandr.drugalev@h-xgroup.com"
 $backend = $null
 $frontend = $null
 try {

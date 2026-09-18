@@ -26,6 +26,8 @@ class Settings(BaseSettings):
     admin_password: str = "ChangeMe123!"
     admin_name: str = "Другалев Александр Александрович"
     admin_employee_id: str = "drugalev"
+    local_auth_bypass: bool = False
+    local_auth_email: str = ""
     employee_id: str = "baranova"
     employee_password: str = "Employee123!"
     cookie_name: str = "expense_session"
