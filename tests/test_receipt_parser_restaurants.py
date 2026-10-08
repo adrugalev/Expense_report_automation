@@ -62,6 +62,51 @@ def test_extract_restaurant_name_and_address_from_ip_receipt_text():
     assert extract_address(text) == "г. Москва, наб. Пресненская, д. 10"
 
 
+@pytest.mark.parametrize(
+    "name",
+    [
+        "Brunnen", "Ресторан Brunnen", "Ресторан Бруннен", "Ресторан Брюннен",
+        "ресторал вгоппен", "ресторан вголпем", "Ресторан «Бруннен»",
+    ],
+)
+def test_brunnen_seller_uses_canonical_brand_from_settlement_place(name):
+    text = f"""
+    ООО "Юбиай ресторантс"
+    105064, г. Москва, ул. Земляной Вал, д. 9А
+    Место расчетов
+    {name}
+    ИТОГ =17140.00
+    """
+
+    assert extract_seller(text) == "Brunnen"
+    assert extract_address(text) == "г. Москва, ул. Земляной Вал, д. 9А"
+    assert extract_amount(text) == Decimal("17140.00")
+    assert guess_expense_type(text, "scan.pdf") == "ресторан"
+
+
+def test_brunnen_menu_item_does_not_replace_another_restaurant():
+    text = """
+    Темное Бруннен 0.5
+    Место расчетов: Ресторан Берлин
+    ИТОГ =720.00
+    """
+
+    assert extract_seller(text) == "Ресторан Берлин"
+    assert normalize_receipt_text(text).startswith("Темное Бруннен 0.5")
+
+
+@pytest.mark.parametrize("label", ["ФД 180(T)", "ФД 180(17?", "ФД"])
+def test_damaged_fd_does_not_take_the_next_fiscal_sign(label):
+    text = f"ФН 7384440901424529\n{label}\nΦ1 0419132341\nПРИХОД\n00.10.26 15:26"
+
+    assert extract_fiscal_document_number(text) is None
+
+
+def test_date_parser_skips_invalid_ocr_date_before_valid_reread():
+    assert extract_date("00.10.26 15:26\n08.10.26 15:26") == date(2026, 10, 8)
+    assert extract_fiscal_document_number("ФД 18007\nФП 0419132341") == "18007"
+
+
 def test_extract_vietnamese_kitchen_receipt_with_noisy_ocr_text():
     text = """
     oL ЗНАЛИЧНЫМИ | =2880.00

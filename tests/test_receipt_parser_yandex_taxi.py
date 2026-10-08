@@ -100,14 +100,14 @@ def test_parse_receipt_prefers_complete_qr_and_skips_requisites_ocr(monkeypatch,
     assert receipt.fiscal_sign == "4048787786"
 
 
-def test_parse_pdf_skips_supplemental_ocr_when_amount_and_fd_are_present(monkeypatch, tmp_path):
+def test_parse_pdf_skips_supplemental_ocr_when_amount_fd_and_date_are_present(monkeypatch, tmp_path):
     pdf_path = tmp_path / "receipt.pdf"
     pdf_path.write_bytes(b"%PDF-1.4\n")
 
     monkeypatch.setattr("src.receipt_parser._try_read_qr_from_pdf", lambda path: None)
     monkeypatch.setattr(
         "src.receipt_parser._try_extract_pdf_text",
-        lambda path: "ООО Кафе\nИНН: 7704340310\nИТОГО 1200.00\nФД 4601",
+        lambda path: "ООО Кафе\nИНН: 7704340310\nИТОГО 1200.00\nФД 4601\n08.10.26 15:26",
     )
 
     def fail_requisites_ocr(path):
@@ -123,3 +123,51 @@ def test_parse_pdf_skips_supplemental_ocr_when_amount_and_fd_are_present(monkeyp
     assert progress[0] == (12, "Поиск QR-кода")
     assert progress[-1] == (96, "Подготовка результата")
     assert [percent for percent, _ in progress] == sorted(percent for percent, _ in progress)
+
+
+@pytest.mark.parametrize("initial_fd", ["ФД 180(T)\nΦ1 0419132341", "ФД 18007"])
+def test_parse_pdf_recovers_missing_date_and_damaged_fd_from_requisites_ocr(monkeypatch, tmp_path, initial_fd):
+    pdf_path = tmp_path / "scan.pdf"
+    pdf_path.write_bytes(b"%PDF-1.4\n")
+    monkeypatch.setattr("src.receipt_parser._try_read_qr_from_pdf", lambda path: None)
+    monkeypatch.setattr(
+        "src.receipt_parser._try_extract_pdf_text",
+        lambda path: f"Место расчетов Ресторан Бруннен\nИТОГ 17140.00\nФН 7384440901424529\n{initial_fd}\n00.10.26 15:26",
+    )
+    calls = []
+
+    def reread(path):
+        calls.append(path)
+        return "ИНН 7729665662\nФД 18007\nФП 0419132341\n08.10.26 15:26"
+
+    monkeypatch.setattr("src.receipt_parser._try_ocr_pdf_requisites", reread)
+    monkeypatch.setattr("src.receipt_parser.lookup_address_online", lambda *args: None)
+
+    receipt = parse_receipt_path(pdf_path)
+
+    assert calls == [pdf_path]
+    assert receipt.fiscal_document_number == "18007"
+    assert receipt.date == date(2026, 10, 8)
+    assert receipt.amount == Decimal("17140.00")
+    assert receipt.seller == "Brunnen"
+
+
+def test_missing_qr_date_is_reread_without_overwriting_qr_fd(monkeypatch, tmp_path):
+    pdf_path = tmp_path / "scan.pdf"
+    pdf_path.write_bytes(b"%PDF-1.4\n")
+    monkeypatch.setattr(
+        "src.receipt_parser._try_read_qr_from_pdf",
+        lambda path: "t=invalid&s=1728.00&fn=7384440900633551&i=26132&fp=4048787786&n=1",
+    )
+    monkeypatch.setattr("src.receipt_parser._try_extract_pdf_text", lambda path: "ИТОГ 1.00\n00.10.26 15:26")
+    monkeypatch.setattr(
+        "src.receipt_parser._try_ocr_pdf_requisites",
+        lambda path: "ФД 18007\n08.10.26 15:26",
+    )
+    monkeypatch.setattr("src.receipt_parser.lookup_address_online", lambda *args: None)
+
+    receipt = parse_receipt_path(pdf_path)
+
+    assert receipt.date == date(2026, 10, 8)
+    assert receipt.fiscal_document_number == "26132"
+    assert receipt.amount == Decimal("1728.00")

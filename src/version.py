@@ -3,8 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 
-APP_VERSION_DATE = "18.09.2026"
-APP_VERSION_REVISION = 1
+APP_VERSION_DATE = "08.10.2026"
+APP_VERSION_REVISION = 2
 
 
 @dataclass(frozen=True)
@@ -15,6 +15,23 @@ class VersionHistoryEntry:
 
 
 APP_VERSION_HISTORY = (
+    VersionHistoryEntry(
+        revision=2,
+        date="08.10.2026",
+        changes=(
+            "Пропущенная дата чека запускает повторное чтение реквизитов PDF в повышенном разрешении.",
+            "Исправлено смешение номера ФД с фискальным признаком при повреждённой OCR-строке.",
+            "Дата и ФД из дополнительного чтения учитываются при подготовке результата; данные QR-кода сохраняют приоритет.",
+        ),
+    ),
+    VersionHistoryEntry(
+        revision=1,
+        date="08.10.2026",
+        changes=(
+            "Исправлено название Brunnen при чтении кириллической строки ресторана и её OCR-искажений.",
+            "Уточнение названия применяется к продавцу и не подменяет ресторан по упоминаниям пива в меню.",
+        ),
+    ),
     VersionHistoryEntry(
         revision=1,
         date="18.09.2026",

@@ -27,6 +27,7 @@ PADDLEOCR_RECOGNITION_MODEL_NAME = "eslav_PP-OCRv5_mobile_rec"
 PADDLEOCR_MAX_SIDE = 1600
 PADDLEOCR_MIN_SCORE = 0.25
 PADDLEOCR_PDF_DPI = 180
+PADDLEOCR_REQUISITES_DPI = 360
 _PADDLEOCR_INFERENCE_LOCK = threading.Lock()
 ProgressCallback = Callable[[int, str], None]
 MONEY_RE = r"(\d[\d\s]*[,.]\d{2})"
@@ -67,7 +68,11 @@ SUPPLIER_INN_PATTERN = re.compile(r"\bИНН\s+Поставщика\s*:\s*(\d{10
 CHECK_NUMBER_PATTERN = re.compile(r"(?:Кассовый\s+чек\.\s+Приход\s*)?(?:^|\n)\s*(?:N|№)\s*(\d+)\s+(?:N|№)\s*[АA]ВТ", re.IGNORECASE)
 SHIFT_PATTERN = re.compile(r"\bСмена\s*(?:N|№)\s*(\d+)\b", re.IGNORECASE)
 KKT_PATTERN = re.compile(r"\b(?:N|№)\s*ККТ\s*:\s*(\d+)\b", re.IGNORECASE)
-FD_PATTERN = re.compile(r"\b(?:N|№)?\s*ФД\s*:?\s*(\d+)\b", re.IGNORECASE)
+FD_PATTERN = re.compile(
+    r"\b(?:N|№)?[ \t]*ФД[ \t]*:?[ \t]*(\d+)"
+    r"(?=[ \t]*(?:$|(?:(?:N|№)[ \t]*)?Ф[НП]\b))",
+    re.IGNORECASE | re.MULTILINE,
+)
 FN_PATTERN = re.compile(r"\b(?:N|№)?\s*ФН\s*:?\s*(\d+)\b", re.IGNORECASE)
 FP_PATTERN = re.compile(r"\bФП\s*:?\s*(\d+)\b", re.IGNORECASE)
 
@@ -139,13 +144,23 @@ def parse_receipt_path(
     fiscal_document_number = _qr_fiscal_document_number(parsed_qr) or extract_fiscal_document_number(text)
     fiscal_drive_number = _qr_fiscal_drive_number(parsed_qr) or extract_fiscal_drive_number(text)
     fiscal_sign = _qr_fiscal_sign(parsed_qr) or extract_fiscal_sign(text)
-    if _needs_pdf_requisites_ocr(suffix, parsed_qr, amount, fiscal_document_number, fiscal_drive_number, fiscal_sign):
+    if _needs_pdf_requisites_ocr(
+        suffix, parsed_qr, amount, fiscal_document_number, fiscal_drive_number, fiscal_sign, receipt_date,
+    ):
         _report_progress(progress_callback, 82, "Дополнительная проверка суммы и ФД")
         supplemental_text = _try_ocr_pdf_requisites(path)
         if supplemental_text.strip():
             combined_text = f"{text}\n{supplemental_text}"
             amount = amount or extract_amount(combined_text)
-            fiscal_document_number = fiscal_document_number or extract_fiscal_document_number(combined_text)
+            receipt_date = _qr_receipt_date(parsed_qr) or extract_date(supplemental_text) or receipt_date
+            receipt_date = _align_receipt_year_with_file_name(receipt_date, file_name)
+            supplemental_fiscal_document_number = extract_fiscal_document_number(supplemental_text)
+            if (
+                supplemental_fiscal_document_number
+                and not _qr_fiscal_document_number(parsed_qr)
+                and (not fiscal_document_number or not extract_field(text, FD_PATTERN))
+            ):
+                fiscal_document_number = supplemental_fiscal_document_number
             supplemental_fiscal_drive_number = extract_fiscal_drive_number(combined_text)
             if _should_replace_fiscal_drive_number(fiscal_drive_number, supplemental_fiscal_drive_number):
                 fiscal_drive_number = supplemental_fiscal_drive_number
@@ -357,12 +372,13 @@ def _needs_pdf_requisites_ocr(
     fiscal_document_number: str | None,
     _fiscal_drive_number: str | None,
     _fiscal_sign: str | None,
+    receipt_date: date | None,
 ) -> bool:
     if suffix != ".pdf":
         return False
-    if parsed_qr and parsed_qr.amount and parsed_qr.fiscal_document_number and parsed_qr.fiscal_drive_number and parsed_qr.fiscal_sign:
+    if _has_complete_qr_fiscal_data(parsed_qr):
         return False
-    return amount is None or fiscal_document_number is None
+    return amount is None or fiscal_document_number is None or receipt_date is None
 
 
 def extract_amount(text: str) -> Decimal | None:
@@ -386,22 +402,20 @@ def extract_amount(text: str) -> Decimal | None:
 def extract_date(text: str) -> date | None:
     normalized = normalize_receipt_text(text)
     for pattern in DATE_PATTERNS:
-        match = pattern.search(normalized)
-        if not match:
-            continue
-        groups = match.groups()
-        parts = [int(part) if part else None for part in groups]
-        try:
-            if len(str(parts[0])) == 4:
-                year = parts[0]
-                if 2000 <= year <= 2100:
-                    return date(year, parts[1], parts[2])
+        for match in pattern.finditer(normalized):
+            groups = match.groups()
+            parts = [int(part) if part else None for part in groups]
+            try:
+                if len(str(parts[0])) == 4:
+                    year = parts[0]
+                    if 2000 <= year <= 2100:
+                        return date(year, parts[1], parts[2])
+                    continue
+                year = _coerce_receipt_year(groups[2])
+                if year:
+                    return date(year, parts[1], parts[0])
+            except (TypeError, ValueError):
                 continue
-            year = _coerce_receipt_year(groups[2])
-            if year:
-                return date(year, parts[1], parts[0])
-        except (TypeError, ValueError):
-            continue
     for match in COMPACT_DATE_PATTERN.finditer(normalized):
         day = int(match.group(1))
         month = int(match.group(2))
@@ -626,9 +640,9 @@ def extract_fiscal_document_number(text: str) -> str | None:
         for candidate_line in lines[index : index + 4]:
             if _is_address_stop_line(candidate_line) and "фд" not in candidate_line.lower():
                 break
-            numbers = re.findall(r"\b\d{4,10}\b", candidate_line)
+            numbers = _short_fiscal_document_candidates(candidate_line)
             if numbers:
-                return numbers[-1]
+                return numbers[0]
     fiscal_drive_line_index = _fuzzy_fiscal_drive_line_index(lines)
     if fiscal_drive_line_index is None:
         return None
@@ -747,12 +761,18 @@ def _fuzzy_fiscal_drive_line_index(lines: list[str]) -> int | None:
 def _short_fiscal_document_candidates(line: str) -> list[str]:
     if OCR_LOOSE_INN_PATTERN.match(line):
         return []
-    if re.search(r"(?i)(?:ккт|kkt|rkt|инн|inn|сумма|итог|заказ|смена|чек)", line):
+    if re.search(r"(?i)(?:ккт|kkt|rkt|инн|inn|сумма|итог|заказ|смена|чек|\bф[нп]\b)", line):
         return []
-    numbers = re.findall(r"(?<![=.,])\b\d{1,8}\b(?![.,])", line)
+    number_matches = list(re.finditer(r"(?<![=.,])\b\d{1,8}\b(?![.,])", line))
+    numbers = [match.group() for match in number_matches]
     candidates: list[str] = []
     for index, value in enumerate(numbers):
-        if 3 <= len(value) <= 7 and index + 1 < len(numbers) and len(numbers[index + 1]) <= 2:
+        if (
+            3 <= len(value) <= 7
+            and index + 1 < len(numbers)
+            and len(numbers[index + 1]) <= 2
+            and line[number_matches[index].end() : number_matches[index + 1].start()].isspace()
+        ):
             glued = f"{value}{numbers[index + 1]}"
             if 4 <= len(glued) <= 8:
                 candidates.append(glued)
@@ -972,7 +992,7 @@ def _try_ocr_pdf_requisites(path: Path) -> str:
 
         with pdfplumber.open(path) as pdf:
             for page in pdf.pages:
-                image = page.to_image(resolution=PADDLEOCR_PDF_DPI).original
+                image = page.to_image(resolution=PADDLEOCR_REQUISITES_DPI).original
                 width, height = image.size
                 crop = image.crop((0, int(height * 0.78), width, height))
                 text = _try_paddleocr_pil_image(crop, optimize_receipt=False)
@@ -1441,6 +1461,10 @@ def _is_bad_restaurant_name(value: str | None) -> bool:
 
 def _clean_seller_candidate(value: str) -> str | None:
     value = re.sub(r"\s+", " ", value).strip(" .,;:!-")
+    # Canonicalize this brand only as a seller, never from beer or menu lines.
+    brand = re.sub(r"(?i)^(?:рестора[нл]|restaurant)\s+", "", value).strip('"«»“”\' ')
+    if re.fullmatch(r"(?i)(?:brunnen|брюннен|[бвb][ргr][уоu][нплn]{2}[еe][нпмnm])", brand):
+        return "Brunnen"
     if not value or _is_bad_restaurant_name(value) or _looks_like_ocr_gibberish(value):
         return None
     return value[:160]
