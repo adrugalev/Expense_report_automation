@@ -83,7 +83,7 @@ def test_parse_receipt_prefers_complete_qr_and_skips_requisites_ocr(monkeypatch,
     )
     monkeypatch.setattr(
         "src.receipt_parser._try_extract_pdf_text",
-        lambda path: "ИТОГ 1.00\nФД 11111\nФН 1111111111111111\nФП 111111",
+        lambda path: "г. Москва, ул. Тестовая, д. 1\nИТОГ 1.00\nФД 11111\nФН 1111111111111111\nФП 111111",
     )
 
     def fail_requisites_ocr(path):
@@ -107,7 +107,7 @@ def test_parse_pdf_skips_supplemental_ocr_when_amount_fd_and_date_are_present(mo
     monkeypatch.setattr("src.receipt_parser._try_read_qr_from_pdf", lambda path: None)
     monkeypatch.setattr(
         "src.receipt_parser._try_extract_pdf_text",
-        lambda path: "ООО Кафе\nИНН: 7704340310\nИТОГО 1200.00\nФД 4601\n08.10.26 15:26",
+        lambda path: "ООО Кафе\nг. Москва, ул. Тестовая, д. 1\nИНН: 7704340310\nИТОГО 1200.00\nФД 4601\n08.10.26 15:26",
     )
 
     def fail_requisites_ocr(path):
@@ -171,3 +171,134 @@ def test_missing_qr_date_is_reread_without_overwriting_qr_fd(monkeypatch, tmp_pa
     assert receipt.date == date(2026, 10, 8)
     assert receipt.fiscal_document_number == "26132"
     assert receipt.amount == Decimal("1728.00")
+
+
+def test_marketing_qr_is_not_selected_as_a_fiscal_receipt():
+    from src.receipt_parser import _best_qr_payload, _best_receipt_qr_payload
+
+    marketing = "https://netmonet.co/tip/123456?s=11910&tn=31"
+    fiscal = "t=20261016T2047&s=10123.50&fn=7384440901609198&i=9269&fp=3056236885&n=1"
+    assert _best_qr_payload([marketing]) is None
+    assert _best_receipt_qr_payload([marketing]) is None
+    assert _best_receipt_qr_payload([marketing, fiscal]) == fiscal
+
+
+def test_marketing_qr_does_not_override_cash_register_amount(monkeypatch, tmp_path):
+    pdf_path = tmp_path / "scan.pdf"
+    pdf_path.write_bytes(b"%PDF-1.4\n")
+    monkeypatch.setattr(
+        "src.receipt_parser._try_read_qr_from_pdf",
+        lambda path: "https://netmonet.co/tip/123456?s=11910&tn=31",
+    )
+    monkeypatch.setattr(
+        "src.receipt_parser._try_extract_pdf_text",
+        lambda path: """
+        сумма без нас
+        =10123.50
+        БЕЗНАЛИЧНЫНИ
+        =10123.50
+        ООО "ПЯТНИЦА"
+        125047. г. Москва. муниципальный округ Тверской. Ул. 1-я Тверская-Ямская. д. 16/23. стр. 1
+        место расчетов
+        ресторан Гамбринус
+        WH 9705211977
+        7384440901609198
+        ФД 9269
+        3056236885
+        ПРИХОД
+        16.10.26 20:47
+        """,
+    )
+    monkeypatch.setattr("src.receipt_parser.lookup_address_online", lambda *args: None)
+
+    def unnecessary_reread(path):
+        raise AssertionError("Complete OCR fields should not require another OCR pass")
+
+    monkeypatch.setattr("src.receipt_parser._try_ocr_pdf_requisites", unnecessary_reread)
+
+    receipt = parse_receipt_path(pdf_path)
+
+    assert receipt.amount == Decimal("10123.50")
+    assert receipt.fiscal_document_number == "9269"
+    assert receipt.date == date(2026, 10, 16)
+    assert "Тверская-Ямская" in receipt.address
+    assert "16/23" in receipt.address
+    assert receipt.address.endswith("стр. 1")
+
+
+def test_shortened_fd_label_requires_an_independent_reread(monkeypatch, tmp_path):
+    pdf_path = tmp_path / "scan.pdf"
+    pdf_path.write_bytes(b"%PDF-1.4\n")
+    monkeypatch.setattr("src.receipt_parser._try_read_qr_from_pdf", lambda path: None)
+    monkeypatch.setattr(
+        "src.receipt_parser._try_extract_pdf_text",
+        lambda path: "г. Казань, ул. Тестовая, д. 7\nИТОГ 18690.00\nФН 7384440800179627\nд1566\n28.11.25 22:02",
+    )
+    calls = []
+
+    def reread(path):
+        calls.append(path)
+        return "ФН 7384440800179627\nФД 15669\n28.11.25 22:02"
+
+    monkeypatch.setattr("src.receipt_parser._try_ocr_pdf_requisites", reread)
+    monkeypatch.setattr("src.receipt_parser.lookup_address_online", lambda *args: None)
+
+    receipt = parse_receipt_path(pdf_path)
+
+    assert calls == [pdf_path]
+    assert receipt.fiscal_document_number == "15669"
+
+
+@pytest.mark.parametrize("original_address", [
+    "г. Казань, ул. Первая-Городская",
+    "г. Казань, ул. Перва\nя-Городская, д. 7, стр. 2",
+])
+def test_complete_qr_still_rereads_an_incomplete_or_wrapped_address(monkeypatch, tmp_path, original_address):
+    pdf_path = tmp_path / "scan.pdf"
+    pdf_path.write_bytes(b"%PDF-1.4\n")
+    monkeypatch.setattr(
+        "src.receipt_parser._try_read_qr_from_pdf",
+        lambda path: "t=20261016T2047&s=10123.50&fn=7384440901609198&i=9269&fp=3056236885&n=1",
+    )
+    monkeypatch.setattr(
+        "src.receipt_parser._try_extract_pdf_text",
+        lambda path: f'ООО "Пример"\n{original_address}',
+    )
+    monkeypatch.setattr(
+        "src.receipt_parser._try_ocr_pdf_requisites",
+        lambda path: "г. Казань, ул. Первая-Городская, д. 7, стр. 2\nИТОГ 500.00\nФД 7777",
+    )
+    monkeypatch.setattr("src.receipt_parser.lookup_address_online", lambda *args: None)
+
+    receipt = parse_receipt_path(pdf_path)
+
+    assert receipt.amount == Decimal("10123.50")
+    assert receipt.fiscal_document_number == "9269"
+    assert receipt.address == "г. Казань, ул. Первая-Городская, д. 7, стр. 2"
+
+
+@pytest.mark.parametrize(("initial_fd", "reread_fd", "expected_fd"), [
+    ("15669", "1566", "15669"),
+    ("1566", "15669", "15669"),
+    ("12345", "98765", "12345"),
+])
+def test_conflicting_unlabelled_fd_reads_do_not_silently_replace_a_number(
+    monkeypatch, tmp_path, initial_fd, reread_fd, expected_fd,
+):
+    pdf_path = tmp_path / "scan.pdf"
+    pdf_path.write_bytes(b"%PDF-1.4\n")
+    monkeypatch.setattr("src.receipt_parser._try_read_qr_from_pdf", lambda path: None)
+    monkeypatch.setattr(
+        "src.receipt_parser._try_extract_pdf_text",
+        lambda path: f"г. Казань, ул. Тестовая, д. 7\nИТОГ 18690.00\nФН 7384440800179627\n{initial_fd}\n28.11.25 22:02",
+    )
+    monkeypatch.setattr(
+        "src.receipt_parser._try_ocr_pdf_requisites",
+        lambda path: f"ФН 7384440800179627\n{reread_fd}\n28.11.25 22:02",
+    )
+    monkeypatch.setattr("src.receipt_parser.lookup_address_online", lambda *args: None)
+
+    receipt = parse_receipt_path(pdf_path)
+
+    assert receipt.fiscal_document_number == expected_fd
+    assert "ФД прочитан неоднозначно" in receipt.comment

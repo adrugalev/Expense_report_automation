@@ -6,6 +6,8 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from .text_normalization import normalize_address_case
+
 
 ExpenseType = Literal["такси", "ресторан", "подарки", "прочее"]
 
@@ -59,6 +61,11 @@ class Receipt(BaseModel):
     qr_raw: str | None = None
 
     model_config = ConfigDict(arbitrary_types_allowed=True)
+
+    @field_validator("address")
+    @classmethod
+    def normalize_address(cls, value: str | None) -> str | None:
+        return normalize_address_case(value)
 
     @field_validator("amount", mode="before")
     @classmethod
@@ -123,6 +130,11 @@ class RepresentativeExpenseReport(BaseReport):
     participants_company: list[str] = Field(default_factory=list)
     participants_counterparty: list[str] = Field(default_factory=list)
     meeting_result: str
+
+    @field_validator("place")
+    @classmethod
+    def normalize_place(cls, value: str) -> str:
+        return normalize_address_case(value) or ""
 
 
 class GiftExpenseReport(BaseReport):

@@ -7,7 +7,7 @@ from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import FileResponse, StreamingResponse
 from sqlalchemy.orm import Session
 
-from src.representative_autofill import choose_profile, complete_representative_fields
+from src.representative_autofill import REPRESENTATIVE_AUTOFILL_PROFILES, choose_profile, complete_representative_fields
 
 from ..config import Settings, get_settings
 from ..database import get_db
@@ -58,7 +58,16 @@ def representative_suggestion(
     data: RepresentativeSuggestionRequest,
     _user: UserRecord = Depends(require_roles("admin", "employee")),
 ) -> RepresentativeSuggestionResponse:
-    profile = choose_profile(data.signature, data.recent_counterparties)
+    if data.counterparty is not None:
+        profile = next(
+            (item for item in REPRESENTATIVE_AUTOFILL_PROFILES
+             if item["counterparty"].casefold() == data.counterparty.strip().casefold()),
+            None,
+        )
+        if profile is None:
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail="Контрагент отсутствует в списке автозаполнения")
+    else:
+        profile = choose_profile(data.signature, data.recent_counterparties)
     completed = complete_representative_fields(
         {
             "counterparty": "",
@@ -68,7 +77,10 @@ def representative_suggestion(
         },
         profile,
     )
-    return RepresentativeSuggestionResponse(**completed)
+    return RepresentativeSuggestionResponse(
+        **completed,
+        counterparties=[item["counterparty"] for item in REPRESENTATIVE_AUTOFILL_PROFILES],
+    )
 
 
 @router.post("/generate", response_model=ReportDetailResponse, status_code=status.HTTP_201_CREATED)

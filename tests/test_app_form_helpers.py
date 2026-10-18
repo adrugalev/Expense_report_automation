@@ -310,7 +310,11 @@ def test_representative_autofill_profile_pool_has_twenty_companies():
     assert len(set(counterparties)) == 20
     for profile in REPRESENTATIVE_AUTOFILL_PROFILES:
         business_context = " ".join([*profile["purposes"], *profile["results"]]).lower()
-        assert "\u043b\u0438\u0444\u0442" in business_context
+        if profile["counterparty"] == "ANTTEQ":
+            assert "соф" in business_context
+            assert "лифт" not in business_context
+        else:
+            assert "лифт" in business_context
         assert (
             "\u043f\u0440\u043e\u0435\u043a\u0442" in business_context
             or "\u043e\u0431\u044a\u0435\u043a\u0442" in business_context

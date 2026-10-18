@@ -19,7 +19,7 @@ from src.report_orchestration import (
     representative_receipt_defaults,
     representative_single_receipt_report,
 )
-from src.representative_autofill import choose_profile, complete_representative_fields
+from src.representative_autofill import REPRESENTATIVE_AUTOFILL_PROFILES, choose_profile, complete_representative_fields
 from src.template_manager import TemplateManager
 from src.utils import slugify_file_part
 
@@ -238,7 +238,13 @@ class ReportService:
         data["restaurant_name"] = data.get("restaurant_name") or restaurant
         data["place"] = place.strip() or data.get("place") or ""
         signature = self._representative_signature(request, report_id)
-        data = complete_representative_fields(data, choose_profile(signature))
+        selected_counterparty = str(data.get("counterparty") or "").strip().casefold()
+        profile = next(
+            (item for item in REPRESENTATIVE_AUTOFILL_PROFILES
+             if item["counterparty"].casefold() == selected_counterparty),
+            None,
+        )
+        data = complete_representative_fields(data, profile or choose_profile(signature))
         report = RepresentativeExpenseReport(initiator=employee, **data)
         if request.build_mode == "per_receipt_different_companies":
             return self._build_distinct_representative_reports(report, output_dir, report_id)

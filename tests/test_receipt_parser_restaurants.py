@@ -107,6 +107,44 @@ def test_date_parser_skips_invalid_ocr_date_before_valid_reread():
     assert extract_fiscal_document_number("ФД 18007\nФП 0419132341") == "18007"
 
 
+@pytest.mark.parametrize("continuation", ["я-Ямская", "Я-Ямская"])
+@pytest.mark.parametrize("company_label", ["ООО", "ООД"])
+def test_wrapped_street_and_dotted_receipt_address_are_preserved(continuation, company_label):
+    text = f"""
+    {company_label} "ПЯТНИЦА"
+    125047. г. Москва. муниципальный округ Тверской. Ул. 1-я Тверска
+    {continuation}. д. 16/23. стр. 1
+    Место расчетов
+    ресторан Гамбринус
+    """
+
+    address = extract_address(text)
+
+    assert "Тверская-Ямская" in address
+    assert "16/23" in address
+    assert address.endswith("стр. 1")
+
+
+def test_shortened_fd_label_is_recovered_in_fiscal_block_only():
+    text = "WH 9705211977\n7384440901609198\nд9269\n3056236885\nПРИХОД\n16.10.26 20:47"
+
+    assert extract_fiscal_document_number(text) == "9269"
+    assert extract_fiscal_document_number("ул. Тестовая\nд9269") is None
+    assert extract_fiscal_document_number("ФН 7384440901609198\nФП 3056236885") is None
+
+
+def test_extract_address_normalizes_mixed_ocr_letter_case():
+    text = """
+    ООО "ПЯТНИЦА"
+    125047. г. Москва. мунициПАльный округ ТВеРсКОЙ. Ул. 1-я ТверскА
+    я-ЯмсКАя. д. 16/23. стр. 1
+    Место расчетов
+    ресторан Гамбринус
+    """
+
+    assert extract_address(text) == "г. Москва. муниципальный округ Тверской. ул. 1-я Тверская-Ямская. д. 16/23. стр. 1"
+
+
 def test_extract_vietnamese_kitchen_receipt_with_noisy_ocr_text():
     text = """
     oL ЗНАЛИЧНЫМИ | =2880.00

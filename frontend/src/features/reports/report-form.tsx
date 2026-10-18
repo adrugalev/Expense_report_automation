@@ -20,6 +20,7 @@ import { switchReportPurpose } from "@/lib/report-purpose";
 import { buildReceiptUploadLinks } from "@/lib/receipt-upload-links";
 import type { Employee, Receipt, ReceiptUpload, ReportDetail, ReportPayload, ReportTypeOption } from "@/lib/types";
 import { cn } from "@/lib/utils";
+import { CounterpartyPicker } from "@/features/reports/counterparty-picker";
 
 const today = () => new Date().toISOString().slice(0, 10);
 const giftPurpose = "Создание долгосрочных деловых отношений, укрепление связей с ключевыми клиентами и деловыми партнёрами и формирование корпоративного имиджа и деловой репутации";
@@ -132,6 +133,8 @@ export function ReportForm() {
   const [uploads, setUploads] = useState<ReceiptUpload[]>([]);
   const [companyParticipants, setCompanyParticipants] = useState<string[]>([]);
   const [draftRestored, setDraftRestored] = useState(false);
+  const [counterpartyOptions, setCounterpartyOptions] = useState<string[]>([]);
+  const [counterpartyMenuOpen, setCounterpartyMenuOpen] = useState(false);
   const recentCounterparties = useRef<string[]>([]);
   const autoSelectedParticipantId = useRef<string | null>(null);
   const purposesByReportType = useRef({ business_trip: "", gifts: "" });
@@ -146,11 +149,12 @@ export function ReportForm() {
     try {
       const raw = localStorage.getItem(draftKey);
       if (raw) {
-        const draft = JSON.parse(raw) as { values?: Partial<FormValues>; receipts?: Receipt[]; uploads?: ReceiptUpload[]; participants?: string[] };
+        const draft = JSON.parse(raw) as { values?: Partial<FormValues>; receipts?: Receipt[]; uploads?: ReceiptUpload[]; participants?: string[]; counterparties?: string[] };
         form.reset({ ...defaults, ...draft.values });
         setReceipts(draft.receipts ?? []);
         setUploads(draft.uploads ?? []);
         setCompanyParticipants(draft.participants ?? []);
+        setCounterpartyOptions(draft.counterparties ?? []);
       }
     } catch { localStorage.removeItem(draftKey); }
     setDraftRestored(true);
@@ -158,10 +162,10 @@ export function ReportForm() {
 
   useEffect(() => {
     if (!draftRestored) return;
-    const subscription = form.watch((values) => localStorage.setItem(draftKey, JSON.stringify({ values, receipts, uploads, participants: companyParticipants })));
-    localStorage.setItem(draftKey, JSON.stringify({ values: form.getValues(), receipts, uploads, participants: companyParticipants }));
+    const subscription = form.watch((values) => localStorage.setItem(draftKey, JSON.stringify({ values, receipts, uploads, participants: companyParticipants, counterparties: counterpartyOptions })));
+    localStorage.setItem(draftKey, JSON.stringify({ values: form.getValues(), receipts, uploads, participants: companyParticipants, counterparties: counterpartyOptions }));
     return () => subscription.unsubscribe();
-  }, [companyParticipants, draftKey, draftRestored, form, receipts, uploads]);
+  }, [companyParticipants, counterpartyOptions, draftKey, draftRestored, form, receipts, uploads]);
 
   useEffect(() => {
     if (!draftRestored || !user?.employee_id) return;
@@ -212,7 +216,7 @@ export function ReportForm() {
   }, []);
 
   const suggestMutation = useMutation({
-    mutationFn: () => {
+    mutationFn: (counterparty: string | undefined) => {
       const currentCounterparty = form.getValues("counterparty").trim();
       if (currentCounterparty) {
         recentCounterparties.current = [
@@ -220,15 +224,16 @@ export function ReportForm() {
           currentCounterparty,
         ].slice(-representativeCompanyCount);
       }
-      return apiFetch<{ counterparty: string; meeting_purpose: string; meeting_result: string; participants_counterparty: string[] }>("/reports/suggestions/representative", {
+      return apiFetch<{ counterparty: string; meeting_purpose: string; meeting_result: string; participants_counterparty: string[]; counterparties: string[] }>("/reports/suggestions/representative", {
         method: "POST",
         body: JSON.stringify({
           signature: `${form.getValues("restaurant_name")} ${form.getValues("place")}`,
+          counterparty,
           recent_counterparties: recentCounterparties.current,
         }),
       });
     },
-    onSuccess: (suggestion) => {
+    onSuccess: (suggestion, counterparty) => {
       recentCounterparties.current = [
         ...recentCounterparties.current.filter((item) => item !== suggestion.counterparty),
         suggestion.counterparty,
@@ -237,7 +242,9 @@ export function ReportForm() {
       form.setValue("meeting_purpose", suggestion.meeting_purpose);
       form.setValue("meeting_result", suggestion.meeting_result);
       form.setValue("participants_counterparty", suggestion.participants_counterparty.join("\n"));
-      toast.success("Поля дополнены новым вариантом");
+      setCounterpartyOptions(suggestion.counterparties);
+      setCounterpartyMenuOpen(!counterparty);
+      toast.success(`Поля дополнены: ${suggestion.counterparty}`);
     },
     onError: (error) => toast.error(error.message),
   });
@@ -321,7 +328,13 @@ export function ReportForm() {
           <Field label="Дата мероприятия" error={form.formState.errors.event_date?.message}><Input type="date" {...form.register("event_date")} /></Field>
           <Field label="Место проведения"><Input {...form.register("place")} placeholder="Адрес заведения" /></Field>
           <Field label="Название ресторана / кафе"><Input {...form.register("restaurant_name")} /></Field>
-          <Field label="Контрагент / организация"><Input {...form.register("counterparty")} /></Field>
+          <Field label="Контрагент / организация"><CounterpartyPicker
+            value={form.watch("counterparty")} options={counterpartyOptions}
+            open={counterpartyMenuOpen} onOpenChange={setCounterpartyMenuOpen}
+            disabled={suggestMutation.isPending}
+            onChange={(value) => form.setValue("counterparty", value, { shouldDirty: true })}
+            onSelect={(value) => suggestMutation.mutate(value)}
+          /></Field>
           <Field label="Цель встречи"><Textarea {...form.register("meeting_purpose")} value={form.watch("meeting_purpose")} /></Field>
           <Field label="Результат встречи"><Textarea {...form.register("meeting_result")} value={form.watch("meeting_result")} /></Field>
         </div>
@@ -331,10 +344,10 @@ export function ReportForm() {
           <Field label="Способ формирования"><select {...form.register("build_mode")} className="h-10 w-full rounded-md border bg-surface px-3 text-sm"><option value="single">Один документ по всем чекам</option><option value="per_receipt">Отдельный документ на каждый чек</option><option value="per_receipt_different_companies">Отдельно по чекам и организациям</option></select></Field>
           <Tooltip>
             <TooltipTrigger asChild>
-              <Button type="button" variant="secondary" onClick={() => suggestMutation.mutate()} disabled={suggestMutation.isPending}><Sparkles className="size-4" />Я — Джон Сноу</Button>
+              <Button type="button" variant="secondary" onClick={() => suggestMutation.mutate(undefined)} disabled={suggestMutation.isPending}><Sparkles className="size-4" />Я — Джон Сноу</Button>
             </TooltipTrigger>
             <TooltipContent side="top">
-              Автоматически подставляет контрагента, участников с его стороны, цель и результат встречи, когда вы не знаете, что указать. You know nothing, John Snow.
+              Подставляет контрагента, участников с его стороны, цель и результат встречи. После нажатия организацию можно выбрать из списка у поля «Контрагент». You know nothing, John Snow.
             </TooltipContent>
           </Tooltip>
         </div>
@@ -348,7 +361,7 @@ export function ReportForm() {
 
     <section className="flex flex-col gap-3 border-t py-5 sm:flex-row sm:items-center sm:justify-between">
       <div className="text-sm"><span className="text-muted">Чеков:</span> <strong>{receipts.length}</strong><span className="mx-2 text-border">|</span><span className="text-muted">Итого:</span> <strong>{total.toLocaleString("ru-RU", { minimumFractionDigits: 2 })} ₽</strong></div>
-      <div className="flex gap-2"><Button type="button" variant="secondary" onClick={() => { const employeeId = user?.employee_id ?? ""; const employee = employees.find((item) => item.id === employeeId); form.reset({ ...defaults, employee_id: employeeId }); setReceipts([]); setUploads([]); setCompanyParticipants(employee ? [employee.full_name] : []); autoSelectedParticipantId.current = employee?.id ?? null; recentCounterparties.current = []; purposesByReportType.current = { business_trip: "", gifts: "" }; localStorage.removeItem(draftKey); }}>Очистить</Button><Button type="submit" disabled={generateMutation.isPending || employeesQuery.isLoading || participantsQuery.isLoading}>{generateMutation.isPending ? <Loader2 className="size-4 animate-spin" /> : <FileCheck2 className="size-4" />}Сформировать документы</Button></div>
+      <div className="flex gap-2"><Button type="button" variant="secondary" disabled={suggestMutation.isPending} onClick={() => { const employeeId = user?.employee_id ?? ""; const employee = employees.find((item) => item.id === employeeId); form.reset({ ...defaults, employee_id: employeeId }); setReceipts([]); setUploads([]); setCompanyParticipants(employee ? [employee.full_name] : []); setCounterpartyOptions([]); setCounterpartyMenuOpen(false); autoSelectedParticipantId.current = employee?.id ?? null; recentCounterparties.current = []; purposesByReportType.current = { business_trip: "", gifts: "" }; localStorage.removeItem(draftKey); }}>Очистить</Button><Button type="submit" disabled={generateMutation.isPending || suggestMutation.isPending || employeesQuery.isLoading || participantsQuery.isLoading}>{generateMutation.isPending ? <Loader2 className="size-4 animate-spin" /> : <FileCheck2 className="size-4" />}Сформировать документы</Button></div>
     </section>
   </form>;
 }

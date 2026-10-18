@@ -7,6 +7,7 @@ import time
 from docx import Document
 from fastapi.testclient import TestClient
 from pypdf import PdfWriter
+import pytest
 
 from backend.app.config import get_settings
 
@@ -267,7 +268,13 @@ def test_representative_suggestions_rotate_counterparties_and_participants(
         suggestion = response.json()
         assert suggestion["counterparty"] not in recent
         assert suggestion["participants_counterparty"]
-        assert "\u043b\u0438\u0444\u0442" in suggestion["meeting_purpose"].lower()
+        if suggestion["counterparty"] == "ANTTEQ":
+            assert "СОФ" in suggestion["meeting_purpose"]
+            assert "лифт" not in suggestion["meeting_purpose"].lower()
+        else:
+            assert "лифт" in suggestion["meeting_purpose"].lower()
+        assert len(suggestion["counterparties"]) == 20
+        assert "ANTTEQ" in suggestion["counterparties"]
         if previous_participants is not None:
             assert suggestion["participants_counterparty"] != previous_participants
             assert suggestion["meeting_purpose"] != previous_purpose
@@ -285,6 +292,52 @@ def test_representative_suggestions_rotate_counterparties_and_participants(
     )
     assert next_cycle.status_code == 200
     assert next_cycle.json()["counterparty"] != recent[-1]
+
+
+def test_selected_antteq_suggestion_uses_sof_and_requested_participants(authenticated_client: TestClient) -> None:
+    response = authenticated_client.post(
+        "/api/reports/suggestions/representative",
+        json={"counterparty": "ANTTEQ", "recent_counterparties": ["ANTTEQ"]},
+    )
+    assert response.status_code == 200
+    suggestion = response.json()
+    assert suggestion["counterparty"] == "ANTTEQ"
+    assert "Буракхан Демирел, руководитель по строительству" in suggestion["participants_counterparty"]
+    assert any(item.startswith("Мустафа,") for item in suggestion["participants_counterparty"])
+    for field in ("meeting_purpose", "meeting_result"):
+        assert "СОФ" in suggestion[field]
+        assert "лифт" not in suggestion[field].lower()
+
+    rejected = authenticated_client.post(
+        "/api/reports/suggestions/representative", json={"counterparty": "Неизвестная компания"},
+    )
+    assert rejected.status_code == 422
+
+
+def test_manually_selected_antteq_generates_documents_with_its_own_context(authenticated_client: TestClient) -> None:
+    employee_id = authenticated_client.get("/api/employees").json()[0]["id"]
+    current_date = date.today().isoformat()
+    generated = authenticated_client.post(
+        "/api/reports/generate",
+        json={
+            "report_type": "representative_expenses",
+            "employee_id": employee_id,
+            "report_date": current_date,
+            "event_date": current_date,
+            "receipts": [{"file_name": "meeting.pdf", "amount": "1000", "expense_type": "ресторан"}],
+            "counterparty": "ANTTEQ",
+            "build_mode": "single",
+        },
+    )
+    assert generated.status_code == 201, generated.text
+    texts = []
+    for file in generated.json()["files"]:
+        document = Document(BytesIO(authenticated_client.get(file["download_url"]).content))
+        texts.extend(paragraph.text for paragraph in document.paragraphs)
+    text = "\n".join(texts)
+    assert "СОФ" in text
+    assert "Буракхан Демирел" in text
+    assert "Мустафа" in text
 
 
 def test_upload_rejects_fake_pdf(authenticated_client: TestClient) -> None:
@@ -485,9 +538,13 @@ def test_generate_representative_reports_in_all_modes(authenticated_client: Test
         assert report["files"], mode
 
 
-def test_representative_download_ignores_stale_form_address(authenticated_client: TestClient) -> None:
+@pytest.mark.parametrize(("address", "expected_address"), [
+    ("б-р Братьев Весниных, д. 2", "б-р Братьев Весниных, д. 2"),
+    ("г. Москва. мунициПАльный округ ТВеРсКОЙ. Ул. 1-я ТверскАя-ЯмсКАя. д. 16/23. стр. 1",
+     "г. Москва. муниципальный округ Тверской. ул. 1-я Тверская-Ямская. д. 16/23. стр. 1"),
+])
+def test_representative_download_ignores_stale_form_address(authenticated_client: TestClient, address, expected_address) -> None:
     employee_id = authenticated_client.get("/api/employees").json()[0]["id"]
-    address = "б-р Братьев Весниных, д. 2"
     generated = authenticated_client.post(
         "/api/reports/generate",
         json={
@@ -506,10 +563,11 @@ def test_representative_download_ignores_stale_form_address(authenticated_client
         },
     )
     assert generated.status_code == 201, generated.text
+    assert generated.json()["input"]["receipts"][0]["address"] == expected_address
     download = authenticated_client.get(generated.json()["files"][0]["download_url"])
     assert download.status_code == 200
     text = "\n".join(p.text for p in Document(BytesIO(download.content)).paragraphs)
-    assert address in text
+    assert expected_address in text
     assert "Сретенка" not in text
 
 

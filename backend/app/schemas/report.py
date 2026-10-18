@@ -124,6 +124,7 @@ class ReportTypeResponse(BaseModel):
 
 class RepresentativeSuggestionRequest(BaseModel):
     signature: str = ""
+    counterparty: str | None = Field(default=None, max_length=1000)
     recent_counterparties: list[str] = Field(default_factory=list, max_length=20)
     meeting_purpose: str = Field(default="", max_length=6000)
 
@@ -133,3 +134,4 @@ class RepresentativeSuggestionResponse(BaseModel):
     meeting_purpose: str
     meeting_result: str
     participants_counterparty: list[str]
+    counterparties: list[str]

@@ -16,6 +16,7 @@ from urllib.parse import parse_qs, urlsplit
 
 from .address_lookup import lookup_address_online, merge_online_address, should_lookup_address, should_verify_restaurant_fields
 from .models import Receipt
+from .text_normalization import normalize_address_case
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -144,8 +145,14 @@ def parse_receipt_path(
     fiscal_document_number = _qr_fiscal_document_number(parsed_qr) or extract_fiscal_document_number(text)
     fiscal_drive_number = _qr_fiscal_drive_number(parsed_qr) or extract_fiscal_drive_number(text)
     fiscal_sign = _qr_fiscal_sign(parsed_qr) or extract_fiscal_sign(text)
+    fiscal_document_conflict = False
+    address = extract_address(text)
+    address_was_wrapped = _has_wrapped_street_name(text)
     if _needs_pdf_requisites_ocr(
         suffix, parsed_qr, amount, fiscal_document_number, fiscal_drive_number, fiscal_sign, receipt_date,
+        address=address,
+        address_was_wrapped=address_was_wrapped,
+        fiscal_document_needs_review=not _qr_fiscal_document_number(parsed_qr) and not extract_field(text, FD_PATTERN),
     ):
         _report_progress(progress_callback, 82, "Дополнительная проверка суммы и ФД")
         supplemental_text = _try_ocr_pdf_requisites(path)
@@ -160,18 +167,33 @@ def parse_receipt_path(
                 and not _qr_fiscal_document_number(parsed_qr)
                 and (not fiscal_document_number or not extract_field(text, FD_PATTERN))
             ):
-                fiscal_document_number = supplemental_fiscal_document_number
+                fiscal_document_conflict = bool(
+                    fiscal_document_number and fiscal_document_number != supplemental_fiscal_document_number
+                )
+                # A larger crop can lose a digit too; prefer a labelled value or a consistent extension.
+                if (
+                    not fiscal_document_number
+                    or extract_field(supplemental_text, FD_PATTERN)
+                    or supplemental_fiscal_document_number.startswith(fiscal_document_number)
+                ):
+                    fiscal_document_number = supplemental_fiscal_document_number
             supplemental_fiscal_drive_number = extract_fiscal_drive_number(combined_text)
             if _should_replace_fiscal_drive_number(fiscal_drive_number, supplemental_fiscal_drive_number):
                 fiscal_drive_number = supplemental_fiscal_drive_number
             fiscal_sign = fiscal_sign or extract_fiscal_sign(combined_text)
+            supplemental_address = extract_address(supplemental_text)
+            if not address or (
+                (not _is_complete_receipt_address(address) or address_was_wrapped)
+                and _is_complete_receipt_address(supplemental_address)
+            ):
+                address = supplemental_address or address
             text = combined_text
     _report_progress(progress_callback, 92, "Проверка распознанных данных")
     amount_was_missing = amount is None
     amount = amount or Decimal("1.00")
     has_useful_data = bool(text.strip() or qr_raw)
     seller = extract_seller(text) or _infer_seller_name(file_name)
-    address = extract_address(text)
+    address = address or extract_address(text)
     inn = extract_inn(text)
     known_receipt = _known_receipt_override(file_name, text, seller)
     if known_receipt:
@@ -198,6 +220,8 @@ def parse_receipt_path(
     if known_receipt and known_receipt.get("expense_type"):
         expense_type = known_receipt["expense_type"]
     comment = None if has_useful_data or known_receipt else "Проверьте распознанные данные"
+    if fiscal_document_conflict:
+        comment = _append_comment(comment, "ФД прочитан неоднозначно при повторной проверке; проверьте номер на чеке")
     if amount_was_missing and amount == Decimal("1.00"):
         comment = _append_comment(comment, _amount_recognition_comment(suffix, text))
     seller, address, comment = _verify_receipt_identity(seller, address, expense_type, comment)
@@ -242,14 +266,22 @@ def parse_qr_payload(qr_raw: str) -> ParsedQr:
     )
 
 
+def _has_qr_fiscal_identity(parsed_qr: ParsedQr | None) -> bool:
+    return bool(
+        parsed_qr
+        and re.fullmatch(r"\d{16}", parsed_qr.fiscal_drive_number or "")
+        and re.fullmatch(r"\d{1,10}", parsed_qr.fiscal_document_number or "")
+        and re.fullmatch(r"\d{1,10}", parsed_qr.fiscal_sign or "")
+    )
+
+
 def _has_complete_qr_fiscal_data(parsed_qr: ParsedQr | None) -> bool:
     return bool(
         parsed_qr
         and parsed_qr.receipt_date
         and parsed_qr.amount
-        and parsed_qr.fiscal_drive_number
-        and parsed_qr.fiscal_document_number
-        and parsed_qr.fiscal_sign
+        and parsed_qr.amount > 0
+        and _has_qr_fiscal_identity(parsed_qr)
     )
 
 
@@ -346,23 +378,23 @@ def _qr_query_string(qr_raw: str) -> str:
 
 
 def _qr_amount(parsed_qr: ParsedQr | None) -> Decimal | None:
-    return parsed_qr.amount if parsed_qr and parsed_qr.amount else None
+    return parsed_qr.amount if _has_qr_fiscal_identity(parsed_qr) and parsed_qr.amount and parsed_qr.amount > 0 else None
 
 
 def _qr_receipt_date(parsed_qr: ParsedQr | None) -> date | None:
-    return parsed_qr.receipt_date if parsed_qr else None
+    return parsed_qr.receipt_date if _has_qr_fiscal_identity(parsed_qr) else None
 
 
 def _qr_fiscal_document_number(parsed_qr: ParsedQr | None) -> str | None:
-    return parsed_qr.fiscal_document_number if parsed_qr else None
+    return parsed_qr.fiscal_document_number if _has_qr_fiscal_identity(parsed_qr) else None
 
 
 def _qr_fiscal_drive_number(parsed_qr: ParsedQr | None) -> str | None:
-    return parsed_qr.fiscal_drive_number if parsed_qr else None
+    return parsed_qr.fiscal_drive_number if _has_qr_fiscal_identity(parsed_qr) else None
 
 
 def _qr_fiscal_sign(parsed_qr: ParsedQr | None) -> str | None:
-    return parsed_qr.fiscal_sign if parsed_qr else None
+    return parsed_qr.fiscal_sign if _has_qr_fiscal_identity(parsed_qr) else None
 
 
 def _needs_pdf_requisites_ocr(
@@ -373,9 +405,15 @@ def _needs_pdf_requisites_ocr(
     _fiscal_drive_number: str | None,
     _fiscal_sign: str | None,
     receipt_date: date | None,
+    *,
+    address: str | None,
+    address_was_wrapped: bool = False,
+    fiscal_document_needs_review: bool = False,
 ) -> bool:
     if suffix != ".pdf":
         return False
+    if not _is_complete_receipt_address(address) or address_was_wrapped or fiscal_document_needs_review:
+        return True
     if _has_complete_qr_fiscal_data(parsed_qr):
         return False
     return amount is None or fiscal_document_number is None or receipt_date is None
@@ -578,9 +616,13 @@ def extract_settlement_place(text: str) -> str | None:
 
 
 def extract_address(text: str) -> str | None:
+    return normalize_address_case(_extract_address(text))
+
+
+def _extract_address(text: str) -> str | None:
     lines = _normalized_lines(text)
-    known_address = _clean_address(" ".join(lines))
-    if known_address:
+    known_address = _clean_address("\n".join(lines))
+    if _is_complete_receipt_address(known_address):
         return known_address[:220]
     for line in lines:
         boulevard = re.search(
@@ -589,8 +631,10 @@ def extract_address(text: str) -> str | None:
         )
         if boulevard:
             return f"б-р {boulevard.group(1).strip(' .,')}, д. {boulevard.group(2)}"
+    partial_address = known_address
     for index, line in enumerate(lines):
-        if not _looks_like_legal_entity(line):
+        line_address = _clean_address(line)
+        if not _looks_like_legal_entity(line) and not line_address:
             continue
         collected = [line]
         for next_line in lines[index + 1 : index + 5]:
@@ -599,14 +643,36 @@ def extract_address(text: str) -> str | None:
             collected.append(next_line)
             if _looks_like_address_end(next_line):
                 break
-        address = _clean_address(" ".join(collected))
-        if address:
+        address = _clean_address("\n".join(collected))
+        if _is_complete_receipt_address(address):
             return address[:220]
+        partial_address = partial_address or address or line_address
     for line in lines:
         address = _clean_address(line)
-        if address:
+        if _is_complete_receipt_address(address):
             return address[:220]
-    return None
+        partial_address = partial_address or address
+    return partial_address[:220] if partial_address else None
+
+
+def _is_complete_receipt_address(value: str | None) -> bool:
+    if not value:
+        return False
+    has_street = re.search(
+        r"(?i)\b(?:ул\.?|улица|пер\.?|переулок|наб\.?|набережная|пр-кт|проспект|"
+        r"пл\.?|площадь|б-р|бульвар|шоссе|аллея|проезд|тупик)\b",
+        value,
+    )
+    has_house = re.search(r"(?i)\b(?:д|дом|вл|владение|здание|сооружение)[.,]?\s*\d+", value)
+    return bool(has_street and has_house)
+
+
+def _has_wrapped_street_name(text: str) -> bool:
+    return bool(re.search(
+        r"(?im)\b(?:ул\.?|улица|пер\.?|переулок|наб\.?|набережная|пр-кт|проспект|б-р|бульвар)"
+        r"[^\n]*[а-яё]\n[а-яё]-[а-яё]",
+        normalize_receipt_text(text),
+    ))
 
 
 def extract_check_number(text: str) -> str | None:
@@ -759,6 +825,10 @@ def _fuzzy_fiscal_drive_line_index(lines: list[str]) -> int | None:
 
 
 def _short_fiscal_document_candidates(line: str) -> list[str]:
+    # A lost leading letter in ФД is safe to recover only near the fiscal block.
+    shortened_label = re.fullmatch(r"(?i)[дd]\s*:?\s*(\d{4,8})", line)
+    if shortened_label:
+        return [shortened_label.group(1)]
     if OCR_LOOSE_INN_PATTERN.match(line):
         return []
     if re.search(r"(?i)(?:ккт|kkt|rkt|инн|inn|сумма|итог|заказ|смена|чек|\bф[нп]\b)", line):
@@ -1102,6 +1172,9 @@ def warm_up_ocr_runtime() -> None:
 
 
 def _try_read_qr_from_pdf(path: Path) -> str | None:
+    embedded_qr = _try_read_qr_from_pdf_images(path)
+    if embedded_qr:
+        return embedded_qr
     try:
         import pdfplumber  # type: ignore
 
@@ -1113,7 +1186,7 @@ def _try_read_qr_from_pdf(path: Path) -> str | None:
                     return decoded
     except Exception:
         pass
-    return _try_read_qr_from_pdf_images(path)
+    return None
 
 
 def _try_read_qr_from_pdf_images(path: Path) -> str | None:
@@ -1172,9 +1245,18 @@ def _decode_qr_cv2_image(image) -> str | None:
 
         detector = cv2.QRCodeDetector()
         decoded_items: list[str] = []
+        try:
+            from pyzbar.pyzbar import decode
+
+            decoded_items.extend(item.data.decode("utf-8", errors="replace") for item in decode(image))
+            best = _best_receipt_qr_payload(decoded_items)
+            if best:
+                return best
+        except Exception:
+            pass
         candidates = list(_qr_candidate_images(image))
-        for scale in (1.0, 1.5, 2.0):
-            for candidate in candidates:
+        for candidate in candidates:
+            for scale in (1.0, 1.5, 2.0):
                 scaled = candidate
                 if scale != 1.0:
                     scaled = cv2.resize(candidate, None, fx=scale, fy=scale, interpolation=cv2.INTER_CUBIC)
@@ -1184,48 +1266,40 @@ def _decode_qr_cv2_image(image) -> str | None:
                 best = _best_receipt_qr_payload(decoded_items)
                 if best:
                     return best
+                if data:
+                    break
     except Exception:
         return None
     return _best_qr_payload(decoded_items)
 
 
 def _qr_candidate_images(image):
-    yield image
     height, width = image.shape[:2]
     if height <= width * 2:
+        yield image
         return
 
     window_height = min(height, max(width, 900))
+    yield image[height - window_height :, :]
+    yield image
     step = max(width // 2, 180)
-    for top in range(0, max(height - window_height + 1, 1), step):
+    for top in range(0, height - window_height, step):
         bottom = min(height, top + window_height)
         yield image[top:bottom, :]
-    if height > window_height:
-        yield image[height - window_height : height, :]
 
 
 def _best_qr_payload(decoded_items: list[str]) -> str | None:
-    unique_items = list(dict.fromkeys(item.strip() for item in decoded_items if item and item.strip()))
-    if not unique_items:
-        return None
-    for item in unique_items:
-        parsed = parse_qr_payload(item)
-        if parsed.amount and parsed.fiscal_drive_number and parsed.fiscal_document_number and parsed.fiscal_sign:
-            return item
-    for item in unique_items:
-        if parse_qr_payload(item).amount:
-            return item
-    return unique_items[0]
+    return _best_receipt_qr_payload(decoded_items)
 
 
 def _best_receipt_qr_payload(decoded_items: list[str]) -> str | None:
     unique_items = list(dict.fromkeys(item.strip() for item in decoded_items if item and item.strip()))
     for item in unique_items:
         parsed = parse_qr_payload(item)
-        if parsed.amount and parsed.fiscal_drive_number and parsed.fiscal_document_number and parsed.fiscal_sign:
+        if _has_complete_qr_fiscal_data(parsed):
             return item
     for item in unique_items:
-        if parse_qr_payload(item).amount:
+        if _qr_amount(parse_qr_payload(item)) is not None:
             return item
     return None
 
@@ -1800,6 +1874,8 @@ def _known_receipt_override(file_name: str, text: str, seller: str | None) -> di
 
 
 def _clean_address(value: str) -> str | None:
+    # Restore a street word split by a printer wrap, such as Тверска / я-Ямская.
+    value = re.sub(r"(?i)(?<=[а-яё])\n([а-яё])(?=-[а-яё])", lambda match: match.group(1).lower(), value)
     value = re.sub(r"\s+", " ", value).strip(" ,-")
     if not value:
         return None
@@ -1926,6 +2002,6 @@ def _looks_like_non_address_line(value: str) -> bool:
         return True
     if re.fullmatch(r"г\s+[a-zа-я]{1,4}\s*[\.\s]+\w{1,4}", normalized):
         return True
-    if normalized.count(".") >= 8:
+    if re.search(r"(?:\.\s*){8,}", normalized):
         return True
     return False
